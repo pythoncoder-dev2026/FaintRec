@@ -2,7 +2,9 @@ name: Android Release
 
 on:
   push:
-    tags: ["v*.*.*"]
+    tags:
+      - "v*.*.*"
+      - "*.*.*"
   workflow_dispatch:
 
 permissions:
@@ -92,12 +94,19 @@ jobs:
           fi
 
       - name: Build info
+        env:
+          DEV_PIN: ${{ secrets.DEV_PIN }}
         run: |
           echo "App: $APP_NAME"
           echo "Package: $PACKAGE_NAME"
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
           echo "Project dir: ${{ steps.proj.outputs.dir }}"
           echo "Gradle: ${{ steps.proj.outputs.gradle }}"
+          if [ -n "$DEV_PIN" ]; then
+            echo "Developer Mode PIN: set"
+          else
+            echo "Developer Mode PIN: not set (Developer Mode will be disabled)"
+          fi
 
       - name: Check signing secrets
         id: sign
@@ -126,6 +135,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          DEV_PIN: ${{ secrets.DEV_PIN }}
         run: |
           if [ "${{ steps.proj.outputs.wrapper }}" = "true" ]; then
             chmod +x ./gradlew
@@ -137,6 +147,8 @@ jobs:
       - name: Build debug APK (fallback)
         if: steps.sign.outputs.signed != 'true'
         working-directory: ${{ steps.proj.outputs.dir }}
+        env:
+          DEV_PIN: ${{ secrets.DEV_PIN }}
         run: |
           if [ "${{ steps.proj.outputs.wrapper }}" = "true" ]; then
             chmod +x ./gradlew
