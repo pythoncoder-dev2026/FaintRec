@@ -13,6 +13,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  APP_NAME: FaintRec
+  PACKAGE_NAME: com.faintrec.app
+  VERSION_NAME: "1.0.0"
+  VERSION_CODE: ${{ github.run_number }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,8 +33,8 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -36,12 +42,24 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Build info
+        run: |
+          echo "App: $APP_NAME"
+          echo "Package: $PACKAGE_NAME"
+          echo "Version: $VERSION_NAME ($VERSION_CODE)"
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug -PversionName=$VERSION_NAME -PversionCode=$VERSION_CODE --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          APK="$(find . -path '*outputs/apk/debug/*.apk' | head -n 1)"
+          cp "$APK" "dist/${APP_NAME}-${VERSION_NAME}-debug.apk"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: FaintRec-debug-apk
-          path: "**/build/outputs/apk/debug/*.apk"
+          name: ${{ env.APP_NAME }}-${{ env.VERSION_NAME }}-debug
+          path: dist/*.apk
           if-no-files-found: error
