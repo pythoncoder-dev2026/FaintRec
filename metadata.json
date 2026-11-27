@@ -1,0 +1,6 @@
+{
+  "name": "FaintRec",
+  "description": "High-sensitivity lossless acoustic & ultrasonic audio recorder, player, non-destructive editor, format converter, and FFT spectrum analyzer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FaintRec</string>
+    <string name="app_tagline">Ultra-Sensitive Lossless Acoustic Recorder</string>
+
+    <!-- Navigation -->
+    <string name="nav_record">Record</string>
+    <string name="nav_library">Library</string>
+    <string name="nav_analyze">Analyze</string>
+    <string name="nav_spirit_box">Spirit Box</string>
+    <string name="nav_log">Log</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Recording -->
+    <string name="record_start">Start Recording</string>
+    <string name="record_stop">Stop Recording</string>
+    <string name="record_pause">Pause</string>
+    <string name="record_resume">Resume</string>
+    <string name="add_marker">Add Marker</string>
+    <string name="input_gain_label">Input Gain (Soft Limiter)</string>
+    <string name="save_raw_label">Save Raw (No Gain)</string>
+    <string name="save_with_gain_label">Save With Gain</string>
+    <string name="var_label">Voice-Activated (VAR)</string>
+    <string name="var_threshold">Trigger Threshold</string>
+    <string name="var_hang_time">Hang Time</string>
+    <string name="var_preroll">2s Pre-Roll Active</string>
+    <string name="var_waiting">Listening for threshold…</string>
+    <string name="unprocessed_unsupported_warn">This device does not support UNPROCESSED audio source. Falling back to %1$s — system DSP may attenuate faint sounds.</string>
+    <string name="bluetooth_mic_warn">Bluetooth microphones use low-bandwidth codecs (8–16 kHz). Use a wired or USB-C microphone for faint sounds.</string>
+    <string name="mic_changed_marker">Mic changed</string>
+    <string name="mic_disconnected_notice">External mic disconnected — safely switched to built-in mic.</string>
+
+    <!-- Permissions -->
+    <string name="perm_title">Audio &amp; Background Permissions</string>
+    <string name="perm_rationale_mic">FaintRec needs microphone access to capture raw, unprocessed acoustic audio at 48 kHz+.</string>
+    <string name="perm_rationale_notif">Notification access keeps background recording alive when the screen is off and provides quick Stop, Pause, and Marker controls.</string>
+    <string name="perm_grant">Grant Permissions</string>
+    <string name="perm_open_settings">Open App Settings</string>
+
+    <!-- Library & Playback -->
+    <string name="library_empty_title">No Recordings Yet</string>
+    <string name="library_empty_subtitle">Capture faint ambient sounds or import existing audio files to analyze, edit, and convert.</string>
+    <string name="import_audio">Import Audio</string>
+    <string name="batch_convert">Batch Convert</string>
+    <string name="badge_imported">Imported</string>
+    <string name="badge_converted">Converted</string>
+    <string name="badge_spirit_box">Spirit Box</string>
+    <string name="playback_forward">Forward</string>
+    <string name="playback_reverse">Reverse</string>
+    <string name="pitch_preserve">Preserve Pitch</string>
+    <string name="pitch_tape">Tape Mode</string>
+    <string name="playback_gain_label">Playback Boost</string>
+    <string name="hearing_safety_warn">Hearing safety: High playback boost active. Protect your ears when using headphones.</string>
+    <string name="export_reversed">Export Reversed</string>
+    <string name="export_speed">Export Speed</string>
+
+    <!-- Post-Processing -->
+    <string name="post_process_title">Post-Processing (Non-Destructive)</string>
+    <string name="post_normalize">Normalize to -1 dBFS</string>
+    <string name="post_noise_reduction">Spectral Gate Denoise</string>
+    <string name="post_compressor">Dynamic Compressor</string>
+    <string name="post_export_new">Export Processed Copy</string>
+
+    <!-- Editor -->
+    <string name="editor_title">Non-Destructive Editor</string>
+    <string name="editor_trim">Trim</string>
+    <string name="editor_cut">Cut</string>
+    <string name="editor_split">Split</string>
+    <string name="editor_merge">Merge</string>
+    <string name="editor_fade_in">Fade In</string>
+    <string name="editor_fade_out">Fade Out</string>
+    <string name="editor_silence">Silence</string>
+    <string name="editor_gain">Gain</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
+    <string name="editor_reset">Reset to Original</string>
+    <string name="editor_render">Render &amp; Export</string>
+    <string name="editor_eq_bypass">A/B Bypass</string>
+    <string name="editor_lufs_title">LUFS Loudness Normalization (ITU-R BS.1770)</string>
+
+    <!-- Converter -->
+    <string name="converter_title">Audio Format Converter</string>
+    <string name="converter_start">Start Conversion</string>
+    <string name="converter_cancel">Cancel</string>
+    <string name="converter_bake_effects">Bake Effects Into Export</string>
+    <string name="converter_lossy_to_lossless_warn">Converting from a lossy source to lossless increases file size without recovering lost audio detail.</string>
+    <string name="converter_lossy_to_lossy_warn">Transcoding between lossy formats causes generation quality loss.</string>
+
+    <!-- Analysis -->
+    <string name="analyze_fft">Live FFT</string>
+    <string name="analyze_spectrogram">Spectrogram</string>
+    <string name="analyze_ab">A/B Compare</string>
+    <string name="analyze_markers">Markers</string>
+
+    <!-- Noise Tools (Editor) -->
+    <string name="noise_tools_title">Noise Tools (Non-Destructive)</string>
+    <string name="noise_tab_remove">Remove</string>
+    <string name="noise_tab_add">Add Noise</string>
+    <string name="noise_tab_level">Level Control</string>
+    <string name="noise_learn_selection">Learn from Selection</string>
+    <string name="noise_auto_detect">Auto-detect Quietest 1s</string>
+    <string name="noise_keep_faint">Keep Faint Sounds</string>
+    <string name="noise_only_listen">Noise Only</string>
+    <string name="noise_bypass">A/B Bypass</string>
+    <string name="noise_reset">Reset Noise</string>
+
+    <!-- Spirit Box -->
+    <string name="spirit_box_title">Spirit Box</string>
+    <string name="spirit_box_disclaimer">For entertainment. Results are random radio/audio fragments.</string>
+    <string name="spirit_box_headphone_tip">Headphones recommended to prevent speaker-to-mic feedback and protect hearing.</string>
+    <string name="spirit_box_start">Start Sweep</string>
+    <string name="spirit_box_stop">Stop Sweep</string>
+    <string name="spirit_box_hold">Hold</string>
+    <string name="spirit_box_resume">Resume</string>
+    <string name="spirit_box_mark">Mark</string>
+    <string name="spirit_box_question">Question</string>
+    <string name="spirit_box_blind_mode">Blind Test Mode</string>
+    <string name="spirit_box_blind_hidden">Blind Test Active — Source Hidden</string>
+    <string name="spirit_box_record_session">Record Mix WAV</string>
+    <string name="spirit_box_record_mic">Also Record Mic (2nd Track)</string>
+    <string name="spirit_box_sessions">Session Logs</string>
+
+    <!-- Notifications, Tile, Widget, Shortcuts -->
+    <string name="notif_channel_recording">FaintRec Recording</string>
+    <string name="notif_channel_conversion">FaintRec Conversion</string>
+    <string name="notif_channel_spirit_box">FaintRec Spirit Box</string>
+    <string name="notif_recording_title">FaintRec Recording</string>
+    <string name="notif_recording_paused">Recording Paused</string>
+    <string name="notif_spirit_box_title">FaintRec Spirit Box Active</string>
+    <string name="tile_label">FaintRec</string>
+    <string name="tile_idle">Tap to record</string>
+    <string name="tile_android14_notice">Android 14+ requires opening FaintRec briefly to start microphone capture from Quick Settings.</string>
+    <string name="shortcut_start_short">Record</string>
+    <string name="shortcut_start_long">Start FaintRec Recording</string>
+    <string name="widget_description">Control FaintRec recording, monitor dBFS level, and drop timestamp markers from your home screen.</string>
+
+    <!-- Settings -->
+    <string name="settings_theme">App Theme</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_audio_input">Audio Input Device</string>
+    <string name="settings_channels">Recording Channels</string>
+    <string name="settings_encoding">PCM Bit Depth</string>
+    <!-- Log Tab: Feature Health & Event Log -->
+    <string name="log_title">Feature Health &amp; Event Log</string>
+    <string name="log_report_label">Report</string>
+    <string name="log_run_all_tests">Run All Tests</string>
+    <string name="log_feature_dashboard">Feature Status Dashboard</string>
+    <string name="log_event_log_title">Event Log</string>
+    <string name="log_test_button">Test</string>
+    <string name="log_status_working">Working</string>
+    <string name="log_status_failed">Failed</string>
+    <string name="log_status_not_supported">Not supported</string>
+    <string name="log_status_not_tested">Not tested</string>
+    <string name="log_filter_all">All</string>
+    <string name="log_filter_errors">Errors</string>
+    <string name="log_filter_warnings">Warnings</string>
+    <string name="log_search_hint">Search logs, features, errors…</string>
+    <string name="log_empty_message">No matching log events yet.</string>
+    <string name="log_action_copy">Copy Log</string>
+    <string name="log_action_share_txt">Share .txt</string>
+    <string name="log_action_export_json">Export JSON</string>
+    <string name="log_action_clear">Clear</string>
+    <string name="log_clear_confirm_title">Clear Event Log?</string>
+    <string name="log_clear_confirm_body">This will permanently remove all stored log entries. Feature health badges remain intact.</string>
+
+    <!-- Save Location & Storage Management -->
+    <string name="notif_channel_storage_alerts">Storage Alerts</string>
+    <string name="storage_low_notif_title">Low Storage Space</string>
+    <string name="storage_low_notif_body">Under 200 MB remaining on the active save location. Recording will stop safely before storage fills.</string>
+    <string name="storage_full_stop_notif_title">Recording Stopped — Storage Nearly Full</string>
+    <string name="storage_full_stop_notif_body">Your recording was stopped automatically and its WAV file was safely finalized to prevent data loss.</string>
+    <string name="storage_section_title">Save Location</string>
+    <string name="storage_private_title">Phone Internal (App-Private)</string>
+    <string name="storage_private_desc">Saved in app-private storage (no permissions needed, hidden from gallery &amp; other apps, deleted on uninstall).</string>
+    <string name="storage_public_title">Phone Internal (Public)</string>
+    <string name="storage_public_desc">Saved in Documents/FaintRec via MediaStore (visible in file managers, stays after uninstall).</string>
+    <string name="storage_sd_title">SD Card / External Storage</string>
+    <string name="storage_sd_desc">Pick any folder on your SD card using the Android system folder picker.</string>
+    <string name="storage_pick_folder">Pick Folder</string>
+    <string name="storage_change_folder">Change Folder</string>
+    <string name="storage_current_path">Path: %1$s</string>
+    <string name="storage_free_and_est">Free: %1$s  •  Est. time left: ~%2$s</string>
+    <string name="storage_low_banner">Low storage warning: under 200 MB free (%1$s left). Recording will stop safely before disk fills.</string>
+    <string name="storage_move_all_btn">Move All Existing Recordings Here</string>
+    <string name="storage_move_all_title">Move Existing Recordings?</string>
+    <string name="storage_move_all_body">Existing recordings will be copied and byte-verified at %1$s before removing the old copies. New recordings already use the selected location.</string>
+    <string name="storage_move_copy_menu">Move / Copy Recording</string>
+    <string name="storage_move_copy_title">Move or Copy Recording</string>
+    <string name="storage_action_move">Move</string>
+    <string name="storage_action_copy">Copy</string>
+    <string name="storage_badge_private">Private</string>
+    <string name="storage_badge_public">Public</string>
+    <string name="storage_badge_sd">SD Card</string>
+    <string name="storage_quick_change">Change</string>
+</resources>

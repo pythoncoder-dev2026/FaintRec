@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FaintRec</string>
+    <string name="app_tagline">अति-संवेदनशील लॉसलेस ध्वनि रिकॉर्डर</string>
+
+    <!-- Navigation -->
+    <string name="nav_record">रिकॉर्ड</string>
+    <string name="nav_library">लाइब्रेरी</string>
+    <string name="nav_analyze">विश्लेषण</string>
+    <string name="nav_spirit_box">स्पिरिट बॉक्स</string>
+    <string name="nav_log">लॉग</string>
+    <string name="nav_settings">सेटिंग्स</string>
+
+    <!-- Recording -->
+    <string name="record_start">रिकॉर्डिंग शुरू करें</string>
+    <string name="record_stop">रिकॉर्डिंग रोकें</string>
+    <string name="record_pause">विराम</string>
+    <string name="record_resume">जारी रखें</string>
+    <string name="add_marker">मार्कर जोड़ें</string>
+    <string name="input_gain_label">इनपुट गेन (सॉफ्ट लिमिटर)</string>
+    <string name="save_raw_label">कच्चा सहेजें (बिना गेन)</string>
+    <string name="save_with_gain_label">गेन के साथ सहेजें</string>
+    <string name="var_label">आवाज़-सक्रिय रिकॉर्डिंग (VAR)</string>
+    <string name="var_threshold">ट्रिगर थ्रेशोल्ड</string>
+    <string name="var_hang_time">हैंग समय</string>
+    <string name="var_preroll">2 सेकंड प्री-रोल सक्रिय</string>
+    <string name="var_waiting">थ्रेशोल्ड की प्रतीक्षा…</string>
+    <string name="unprocessed_unsupported_warn">यह डिवाइस UNPROCESSED ऑडियो स्रोत का समर्थन नहीं करता। %1$s का उपयोग हो रहा है — सिस्टम DSP धीमी आवाज़ों को कम कर सकता है।</string>
+    <string name="bluetooth_mic_warn">ब्लूटूथ माइक की गुणवत्ता और सैंपल दर कम (8–16 kHz) होती है। धीमी ध्वनियों के लिए वायर्ड या USB-C माइक का उपयोग करें।</string>
+    <string name="mic_changed_marker">माइक बदला गया</string>
+    <string name="mic_disconnected_notice">बाहरी माइक डिस्कनेक्ट हो गया — सुरक्षित रूप से इनबिल्ट माइक पर स्विच किया गया।</string>
+
+    <!-- Permissions -->
+    <string name="perm_title">ऑडियो और बैकग्राउंड अनुमतियाँ</string>
+    <string name="perm_rationale_mic">FaintRec को 48 kHz+ पर बिना प्रोसेस किए कच्चे ऑडियो को कैप्चर करने के लिए माइक्रोफ़ोन अनुमति की आवश्यकता है।</string>
+    <string name="perm_rationale_notif">स्क्रीन बंद होने पर बैकग्राउंड रिकॉर्डिंग जारी रखने और त्वरित नियंत्रण दिखाने के लिए सूचना अनुमति आवश्यक है।</string>
+    <string name="perm_grant">अनुमतियाँ दें</string>
+    <string name="perm_open_settings">ऐप सेटिंग्स खोलें</string>
+
+    <!-- Library & Playback -->
+    <string name="library_empty_title">अभी कोई रिकॉर्डिंग नहीं</string>
+    <string name="library_empty_subtitle">धीमी ध्वनियाँ रिकॉर्ड करें या विश्लेषण, संपादन और रूपांतरण के लिए ऑडियो फ़ाइलें इम्पोर्ट करें।</string>
+    <string name="import_audio">ऑडियो इम्पोर्ट करें</string>
+    <string name="batch_convert">बैच कन्वर्ट</string>
+    <string name="badge_imported">इम्पोर्टेड</string>
+    <string name="badge_converted">कन्वर्टेड</string>
+    <string name="badge_spirit_box">स्पिरिट बॉक्स</string>
+    <string name="playback_forward">आगे</string>
+    <string name="playback_reverse">उल्टा</string>
+    <string name="pitch_preserve">पिच सुरक्षित रखें</string>
+    <string name="pitch_tape">टेप मोड</string>
+    <string name="playback_gain_label">प्लेबैक बूस्ट</string>
+    <string name="hearing_safety_warn">श्रवण सुरक्षा: उच्च प्लेबैक बूस्ट सक्रिय है। हेडफ़ोन उपयोग करते समय सावधानी बरतें।</string>
+    <string name="export_reversed">उल्टा एक्सपोर्ट करें</string>
+    <string name="export_speed">बदली गति एक्सपोर्ट करें</string>
+
+    <!-- Post-Processing -->
+    <string name="post_process_title">पोस्ट-प्रोसेसिंग (मूल सुरक्षित)</string>
+    <string name="post_normalize">-1 dBFS तक नॉर्मलाइज़</string>
+    <string name="post_noise_reduction">स्पेक्ट्रल गेट शोर कमी</string>
+    <string name="post_compressor">डायनामिक कंप्रेसर</string>
+    <string name="post_export_new">प्रोसेस्ड कॉपी एक्सपोर्ट करें</string>
+
+    <!-- Editor -->
+    <string name="editor_title">नॉन-डिस्ट्रक्टिव एडिटर</string>
+    <string name="editor_trim">ट्रिम</string>
+    <string name="editor_cut">कट</string>
+    <string name="editor_split">विभाजित</string>
+    <string name="editor_merge">मर्ज</string>
+    <string name="editor_fade_in">फेड इन</string>
+    <string name="editor_fade_out">फेड आउट</string>
+    <string name="editor_silence">मौन</string>
+    <string name="editor_gain">गेन</string>
+    <string name="editor_undo">पूर्ववत</string>
+    <string name="editor_redo">पुनः करें</string>
+    <string name="editor_reset">मूल पर रीसेट</string>
+    <string name="editor_render">रेंडर और एक्सपोर्ट</string>
+    <string name="editor_eq_bypass">A/B बायपास</string>
+    <string name="editor_lufs_title">LUFS लाउडनेस नॉर्मलाइज़ेशन (ITU-R BS.1770)</string>
+
+    <!-- Converter -->
+    <string name="converter_title">ऑडियो फॉर्मेट कन्वर्टर</string>
+    <string name="converter_start">रूपांतरण शुरू करें</string>
+    <string name="converter_cancel">रद्द करें</string>
+    <string name="converter_bake_effects">इफ़ेक्ट्स एक्सपोर्ट में शामिल करें</string>
+    <string name="converter_lossy_to_lossless_warn">लॉसी से लॉसलेस में बदलने पर फ़ाइल आकार बढ़ता है, लेकिन खोई हुई गुणवत्ता वापस नहीं आती।</string>
+    <string name="converter_lossy_to_lossy_warn">लॉसी से लॉसी में बदलने पर ध्वनि गुणवत्ता में कमी आती है।</string>
+
+    <!-- Analysis -->
+    <string name="analyze_fft">लाइव FFT</string>
+    <string name="analyze_spectrogram">स्पेक्ट्रोग्राम</string>
+    <string name="analyze_ab">A/B तुलना</string>
+    <string name="analyze_markers">मार्कर</string>
+
+    <!-- Noise Tools (Editor) -->
+    <string name="noise_tools_title">शोर नियंत्रण उपकरण (नॉन-डिस्ट्रक्टिव)</string>
+    <string name="noise_tab_remove">हटाएँ</string>
+    <string name="noise_tab_add">शोर जोड़ें</string>
+    <string name="noise_tab_level">स्तर नियंत्रण</string>
+    <string name="noise_learn_selection">चयन से प्रोफ़ाइल सीखें</string>
+    <string name="noise_auto_detect">सबसे शांत 1 सेकंड खोजें</string>
+    <string name="noise_keep_faint">धीमी ध्वनियाँ बचाएँ</string>
+    <string name="noise_only_listen">केवल शोर सुनें</string>
+    <string name="noise_bypass">A/B बायपास</string>
+    <string name="noise_reset">शोर रीसेट</string>
+
+    <!-- Spirit Box -->
+    <string name="spirit_box_title">स्पिरिट बॉक्स</string>
+    <string name="spirit_box_disclaimer">मनोरंजन के लिए। परिणाम यादृच्छिक रेडियो/ऑडियो अंश हैं।</string>
+    <string name="spirit_box_headphone_tip">फ़ीडबैक से बचने और श्रवण सुरक्षा के लिए हेडफ़ोन का उपयोग करें।</string>
+    <string name="spirit_box_start">स्वीप शुरू करें</string>
+    <string name="spirit_box_stop">स्वीप रोकें</string>
+    <string name="spirit_box_hold">रोकें</string>
+    <string name="spirit_box_resume">जारी रखें</string>
+    <string name="spirit_box_mark">मार्क</string>
+    <string name="spirit_box_question">प्रश्न</string>
+    <string name="spirit_box_blind_mode">ब्लाइंड टेस्ट मोड</string>
+    <string name="spirit_box_blind_hidden">ब्लाइंड टेस्ट सक्रिय — स्रोत छिपा है</string>
+    <string name="spirit_box_record_session">मिक्स WAV रिकॉर्ड करें</string>
+    <string name="spirit_box_record_mic">माइक भी रिकॉर्ड करें (दूसरा ट्रैक)</string>
+    <string name="spirit_box_sessions">सत्र लॉग</string>
+
+    <!-- Notifications, Tile, Widget, Shortcuts -->
+    <string name="notif_channel_recording">FaintRec रिकॉर्डिंग</string>
+    <string name="notif_channel_conversion">FaintRec रूपांतरण</string>
+    <string name="notif_channel_spirit_box">FaintRec स्पिरिट बॉक्स</string>
+    <string name="notif_recording_title">FaintRec रिकॉर्डिंग</string>
+    <string name="notif_recording_paused">रिकॉर्डिंग रुकी हुई है</string>
+    <string name="notif_spirit_box_title">FaintRec स्पिरिट बॉक्स सक्रिय</string>
+    <string name="tile_label">FaintRec</string>
+    <string name="tile_idle">रिकॉर्ड करने के लिए टैप करें</string>
+    <string name="tile_android14_notice">Android 14+ पर क्विक सेटिंग्स से माइक शुरू करने के लिए ऐप संक्षेप में खुलता है।</string>
+    <string name="shortcut_start_short">रिकॉर्ड</string>
+    <string name="shortcut_start_long">FaintRec रिकॉर्डिंग शुरू करें</string>
+    <string name="widget_description">होम स्क्रीन से FaintRec रिकॉर्डिंग नियंत्रित करें, dBFS स्तर देखें और मार्कर जोड़ें।</string>
+
+    <!-- Settings -->
+    <string name="settings_theme">ऐप थीम</string>
+    <string name="settings_language">भाषा</string>
+    <string name="settings_audio_input">ऑडियो इनपुट डिवाइस</string>
+    <string name="settings_channels">रिकॉर्डिंग चैनल</string>
+    <string name="settings_encoding">PCM बिट गहराई</string>
+    <!-- Log Tab: Feature Health & Event Log -->
+    <string name="log_title">फ़ीचर स्वास्थ्य और इवेंट लॉग</string>
+    <string name="log_report_label">रिपोर्ट</string>
+    <string name="log_run_all_tests">सभी परीक्षण चलाएँ</string>
+    <string name="log_feature_dashboard">फ़ीचर स्थिति डैशबोर्ड</string>
+    <string name="log_event_log_title">इवेंट लॉग</string>
+    <string name="log_test_button">टेस्ट</string>
+    <string name="log_status_working">काम कर रहा है</string>
+    <string name="log_status_failed">विफल</string>
+    <string name="log_status_not_supported">समर्थित नहीं</string>
+    <string name="log_status_not_tested">परीक्षण नहीं हुआ</string>
+    <string name="log_filter_all">सभी</string>
+    <string name="log_filter_errors">त्रुटियाँ</string>
+    <string name="log_filter_warnings">चेतावनियाँ</string>
+    <string name="log_search_hint">लॉग, फ़ीचर या त्रुटियाँ खोजें…</string>
+    <string name="log_empty_message">अभी कोई मेल खाने वाली लॉग प्रविष्टि नहीं है।</string>
+    <string name="log_action_copy">लॉग कॉपी करें</string>
+    <string name="log_action_share_txt">.txt साझा करें</string>
+    <string name="log_action_export_json">JSON एक्सपोर्ट</string>
+    <string name="log_action_clear">साफ़ करें</string>
+    <string name="log_clear_confirm_title">इवेंट लॉग साफ़ करें?</string>
+    <string name="log_clear_confirm_body">यह सभी सहेजी गई लॉग प्रविष्टियों को स्थायी रूप से हटा देगा। फ़ीचर स्थिति बैज सुरक्षित रहेंगे।</string>
+
+    <!-- Save Location & Storage Management -->
+    <string name="notif_channel_storage_alerts">स्टोरेज अलर्ट</string>
+    <string name="storage_low_notif_title">स्टोरेज कम है</string>
+    <string name="storage_low_notif_body">सक्रिय स्टोरेज में 200 MB से कम स्थान बचा है। स्टोरेज भरने से पहले रिकॉर्डिंग सुरक्षित रूप से रुक जाएगी।</string>
+    <string name="storage_full_stop_notif_title">रिकॉर्डिंग रुकी — स्टोरेज लगभग भर गया</string>
+    <string name="storage_full_stop_notif_body">डेटा हानि से बचाने के लिए रिकॉर्डिंग अपने आप रोकी गई और WAV फ़ाइल सुरक्षित रूप से सहेजी गई।</string>
+    <string name="storage_section_title">सहेजने का स्थान (Save Location)</string>
+    <string name="storage_private_title">फ़ोन इंटरनल (ऐप-प्राइवेट)</string>
+    <string name="storage_private_desc">ऐप-प्राइवेट मेमोरी में सहेजा जाता है (कोई अनुमति आवश्यक नहीं, गैलरी से छिपा, अनइंस्टॉल पर हट जाता है)।</string>
+    <string name="storage_public_title">फ़ोन इंटरनल (पब्लिक)</string>
+    <string name="storage_public_desc">MediaStore के माध्यम से Documents/FaintRec में सहेजा जाता है (फ़ाइल मैनेजर में दिखाई देता है, अनइंस्टॉल के बाद भी रहता है)।</string>
+    <string name="storage_sd_title">SD कार्ड / बाहरी स्टोरेज</string>
+    <string name="storage_sd_desc">सिस्टम फ़ोल्डर पिकर का उपयोग करके अपने SD कार्ड पर कोई फ़ोल्डर चुनें।</string>
+    <string name="storage_pick_folder">फ़ोल्डर चुनें</string>
+    <string name="storage_change_folder">फ़ोल्डर बदलें</string>
+    <string name="storage_current_path">पथ: %1$s</string>
+    <string name="storage_free_and_est">खाली स्थान: %1$s  •  अनुमानित समय: ~%2$s</string>
+    <string name="storage_low_banner">कम स्टोरेज चेतावनी: 200 MB से कम खाली (%1$s शेष)। स्टोरेज भरने से पहले रिकॉर्डिंग सुरक्षित रूप से रुक जाएगी।</string>
+    <string name="storage_move_all_btn">सभी पुरानी रिकॉर्डिंग यहाँ ले जाएँ</string>
+    <string name="storage_move_all_title">पुरानी रिकॉर्डिंग स्थानांतरित करें?</string>
+    <string name="storage_move_all_body">पुरानी कॉपी हटाने से पहले सभी मौजूदा रिकॉर्डिंग को %1$s में सुरक्षित रूप से कॉपी और सत्यापित किया जाएगा।</string>
+    <string name="storage_move_copy_menu">रिकॉर्डिंग ले जाएँ / कॉपी करें</string>
+    <string name="storage_move_copy_title">रिकॉर्डिंग ले जाएँ या कॉपी करें</string>
+    <string name="storage_action_move">ले जाएँ (Move)</string>
+    <string name="storage_action_copy">कॉपी करें (Copy)</string>
+    <string name="storage_badge_private">प्राइवेट</string>
+    <string name="storage_badge_public">पब्लिक</string>
+    <string name="storage_badge_sd">SD कार्ड</string>
+    <string name="storage_quick_change">बदलें</string>
+</resources>
