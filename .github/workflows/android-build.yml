@@ -99,9 +99,18 @@ jobs:
           echo "Project dir: ${{ steps.proj.outputs.dir }}"
           echo "Gradle: ${{ steps.proj.outputs.gradle }}"
           echo "Using gradlew: ${{ steps.proj.outputs.wrapper }}"
+          if [ -n "$DEV_PIN" ]; then
+            echo "Developer Mode PIN: set"
+          else
+            echo "Developer Mode PIN: not set (Developer Mode will be disabled)"
+          fi
+        env:
+          DEV_PIN: ${{ secrets.DEV_PIN }}
 
       - name: Build debug APK
         working-directory: ${{ steps.proj.outputs.dir }}
+        env:
+          DEV_PIN: ${{ secrets.DEV_PIN }}
         run: |
           if [ "${{ steps.proj.outputs.wrapper }}" = "true" ]; then
             chmod +x ./gradlew
