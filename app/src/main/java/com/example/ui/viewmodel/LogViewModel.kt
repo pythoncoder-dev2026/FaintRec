@@ -10,8 +10,10 @@ import com.example.data.AppLogEntity
 import com.example.data.FeatureHealthEntity
 import com.example.data.FeatureHealthStatus
 import com.example.data.LogLevel
+import com.example.data.SettingsDataStore
 import com.example.logging.AppLogger
 import com.example.logging.FeatureSelfTestRunner
+import com.example.logging.RadioStreamCheckResult
 import com.example.util.StorageHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -22,8 +24,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -51,6 +53,8 @@ data class LogScreenState(
     val healthRows: List<FeatureHealthUiRow> = AppFeature.entries.map {
         FeatureHealthUiRow(it, FeatureHealthStatus.NOT_TESTED, null, null)
     },
+    val radioStreams: List<RadioStreamCheckResult> = emptyList(),
+    val testingStreamUrl: String? = null,
     val filteredLogs: List<AppLogEntity> = emptyList(),
     val totalLogCount: Int = 0,
     val availableFeatureTags: List<String> = emptyList(),
@@ -68,7 +72,8 @@ data class LogScreenState(
 class LogViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val appLogger: AppLogger,
-    private val selfTestRunner: FeatureSelfTestRunner
+    private val selfTestRunner: FeatureSelfTestRunner,
+    private val settingsDataStore: SettingsDataStore
 ) : ViewModel() {
 
     private val _quickFilter = MutableStateFlow(LogQuickFilter.ALL)
@@ -78,6 +83,7 @@ class LogViewModel @Inject constructor(
     private val _testProgress = MutableStateFlow(0f)
     private val _currentTestingLabel = MutableStateFlow("")
     private val _testingFeatureId = MutableStateFlow<String?>(null)
+    private val _testingStreamUrl = MutableStateFlow<String?>(null)
     private val _isRefreshing = MutableStateFlow(false)
 
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -99,6 +105,22 @@ class LogViewModel @Inject constructor(
         TestProgressSnapshot(runningAll, progress, label, singleId, refreshing)
     }
 
+    private val radioStreamInputs = combine(
+        settingsDataStore.settingsFlow,
+        selfTestRunner.radioStreamResults,
+        _testingStreamUrl
+    ) { settings, resultsMap, testingUrl ->
+        val items = settings.spiritBoxStreamUrls.map { url ->
+            resultsMap[url] ?: RadioStreamCheckResult(
+                url = url,
+                isReachable = null,
+                httpCode = null,
+                statusDetail = "Not tested"
+            )
+        }
+        items to testingUrl
+    }
+
     private data class TestProgressSnapshot(
         val isRunningAll: Boolean,
         val progress: Float,
@@ -114,8 +136,9 @@ class LogViewModel @Inject constructor(
         appLogger.featureHealth,
         appLogger.logs,
         filterInputs,
-        testRunnerInputs
-    ) { healthEntities, logEntities, (quickFilter, featureTag, query), testSnap ->
+        testRunnerInputs,
+        radioStreamInputs
+    ) { healthEntities, logEntities, (quickFilter, featureTag, query), testSnap, (radioStreams, testingStreamUrl) ->
         latestHealth = healthEntities
         latestLogs = logEntities
 
@@ -160,6 +183,8 @@ class LogViewModel @Inject constructor(
             notSupportedCount = notSupported,
             notTestedCount = notTested,
             healthRows = rows,
+            radioStreams = radioStreams,
+            testingStreamUrl = testingStreamUrl,
             filteredLogs = filtered,
             totalLogCount = logEntities.size,
             availableFeatureTags = featureTags,
@@ -237,6 +262,76 @@ class LogViewModel @Inject constructor(
             } finally {
                 _testingFeatureId.value = null
             }
+        }
+    }
+
+    fun testSingleRadioStream(url: String) {
+        if (_isRunningAllTests.value || _testingFeatureId.value != null || _testingStreamUrl.value != null) return
+        viewModelScope.launch {
+            _testingStreamUrl.value = url
+            try {
+                val res = selfTestRunner.testSingleRadioStream(url)
+                val statusWord = if (res.isReachable == true) "Reachable" else "Unreachable"
+                _events.tryEmit("$statusWord (${res.statusDetail}): $url")
+            } catch (e: Exception) {
+                appLogger.warn(AppFeature.SPIRIT_BOX_RADIO, "Stream test error ($url): ${e.message}")
+                _events.tryEmit("Stream test error: ${e.message}")
+            } finally {
+                _testingStreamUrl.value = null
+            }
+        }
+    }
+
+    fun editRadioStream(oldUrl: String, newRawUrl: String) {
+        val cleaned = newRawUrl.trim()
+        if (!cleaned.startsWith("http://") && !cleaned.startsWith("https://")) {
+            _events.tryEmit("Stream URL must start with http:// or https://")
+            return
+        }
+        viewModelScope.launch {
+            val current = settingsDataStore.settingsFlow.first().spiritBoxStreamUrls
+            val updated = current.map { if (it == oldUrl) cleaned else it }.distinct()
+            settingsDataStore.setSpiritBoxStreamUrls(updated)
+            selfTestRunner.pruneRemovedStreamResults(updated)
+            appLogger.info(AppFeature.SPIRIT_BOX_RADIO, "Edited radio stream: $oldUrl -> $cleaned")
+            _events.tryEmit("Updated stream URL. Testing reachability…")
+            _testingStreamUrl.value = cleaned
+            try {
+                selfTestRunner.testSingleRadioStream(cleaned)
+            } finally {
+                _testingStreamUrl.value = null
+            }
+        }
+    }
+
+    fun removeRadioStream(url: String) {
+        viewModelScope.launch {
+            val current = settingsDataStore.settingsFlow.first().spiritBoxStreamUrls
+            val updated = current.filterNot { it == url }
+            settingsDataStore.setSpiritBoxStreamUrls(updated)
+            selfTestRunner.pruneRemovedStreamResults(updated)
+            appLogger.info(AppFeature.SPIRIT_BOX_RADIO, "Removed radio stream: $url")
+            _events.tryEmit("Removed stream from Spirit Box list.")
+        }
+    }
+
+    fun removeUnreachableStreams() {
+        viewModelScope.launch {
+            val results = selfTestRunner.radioStreamResults.value
+            val current = settingsDataStore.settingsFlow.first().spiritBoxStreamUrls
+            val unreachableSet = current.filter { results[it]?.isReachable == false }.toSet()
+            if (unreachableSet.isEmpty()) {
+                _events.tryEmit("No unreachable streams to remove.")
+                return@launch
+            }
+            val updated = current.filterNot { it in unreachableSet }
+            settingsDataStore.setSpiritBoxStreamUrls(updated)
+            selfTestRunner.pruneRemovedStreamResults(updated)
+            appLogger.info(
+                AppFeature.SPIRIT_BOX_RADIO,
+                "Removed ${unreachableSet.size} unreachable radio stream(s)"
+            )
+            _events.tryEmit("Removed ${unreachableSet.size} unreachable stream(s).")
         }
     }
 

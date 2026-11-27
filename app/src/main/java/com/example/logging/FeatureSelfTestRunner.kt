@@ -41,10 +41,17 @@ import com.example.editor.NonDestructiveEditorEngine
 import com.example.editor.SpectralNoiseProcessor
 import com.example.service.FaintRecTileService
 import com.example.service.RecordingForegroundService
+import com.example.spiritbox.SpiritBoxLocalAudioSource
 import com.example.util.AudioMath
 import com.example.widget.FaintRecWidgetReceiver
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -62,6 +69,14 @@ import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+data class RadioStreamCheckResult(
+    val url: String,
+    val isReachable: Boolean?, // true = reachable, false = unreachable, null = not tested
+    val httpCode: Int? = null,
+    val statusDetail: String = "Not tested",
+    val checkedAtMillis: Long = 0L
+)
+
 /**
  * Runs non-destructive self-tests for every FaintRec feature in the background
  * and updates [AppLogger] feature health badges automatically.
@@ -76,8 +91,43 @@ class FeatureSelfTestRunner @Inject constructor(
     private val editorEngine: NonDestructiveEditorEngine,
     private val audioImporter: AudioImporter,
     private val repository: FaintRecRepository,
-    private val settingsDataStore: SettingsDataStore
+    private val settingsDataStore: SettingsDataStore,
+    private val localAudioSource: SpiritBoxLocalAudioSource
 ) {
+    private val _radioStreamResults = MutableStateFlow<Map<String, RadioStreamCheckResult>>(emptyMap())
+    val radioStreamResults: StateFlow<Map<String, RadioStreamCheckResult>> = _radioStreamResults.asStateFlow()
+
+    fun pruneRemovedStreamResults(activeUrls: List<String>) {
+        val activeSet = activeUrls.toSet()
+        _radioStreamResults.value = _radioStreamResults.value.filterKeys { it in activeSet }
+    }
+
+    suspend fun testSingleRadioStream(urlStr: String): RadioStreamCheckResult = withContext(Dispatchers.IO) {
+        val res = checkSingleRadioStreamSync(urlStr)
+        val updated = _radioStreamResults.value.toMutableMap().apply {
+            put(urlStr, res)
+        }
+        _radioStreamResults.value = updated
+
+        if (res.isReachable == true) {
+            logger.info(AppFeature.SPIRIT_BOX_RADIO, "Stream reachable (${res.statusDetail}): ${res.url}")
+        } else {
+            logger.warn(AppFeature.SPIRIT_BOX_RADIO, "Stream unreachable (${res.statusDetail}): ${res.url}")
+        }
+
+        val configuredUrls = settingsDataStore.settingsFlow.first().spiritBoxStreamUrls
+        val checkedForConfigured = configuredUrls.mapNotNull { updated[it] }
+        if (checkedForConfigured.isNotEmpty()) {
+            val reachableCount = checkedForConfigured.count { it.isReachable == true }
+            val summary = formatStreamResultsSummary(configuredUrls, updated)
+            if (reachableCount > 0) {
+                logger.reportSuccess(AppFeature.SPIRIT_BOX_RADIO, summary)
+            } else {
+                logger.reportFailure(AppFeature.SPIRIT_BOX_RADIO, summary)
+            }
+        }
+        res
+    }
     suspend fun runAllTests(
         onProgress: (progress: Float, currentFeatureName: String) -> Unit
     ) = withContext(Dispatchers.IO) {
@@ -534,43 +584,181 @@ class FeatureSelfTestRunner @Inject constructor(
     private suspend fun testSpiritBoxRadioStreams() {
         val urls = settingsDataStore.settingsFlow.first().spiritBoxStreamUrls
         if (urls.isEmpty()) {
+            _radioStreamResults.value = emptyMap()
             logger.reportFailure(AppFeature.SPIRIT_BOX_RADIO, "No radio stream URLs configured")
             return
         }
-        var reachable = 0
-        var lastErr = "No stream responded"
-        for (urlStr in urls.take(3)) {
-            runCatching {
-                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "HEAD"
-                    connectTimeout = 3000
-                    readTimeout = 3000
-                    instanceFollowRedirects = true
-                }
-                val code = conn.responseCode
-                conn.disconnect()
-                if (code in 200..399) reachable++
-                else lastErr = "HTTP $code from $urlStr"
-            }.onFailure { e ->
-                lastErr = e.message ?: "Network unreachable"
-            }
-            if (reachable > 0) break
+
+        // Check every configured stream URL concurrently (no early exit)
+        val results = coroutineScope {
+            urls.map { urlStr ->
+                async(Dispatchers.IO) { checkSingleRadioStreamSync(urlStr) }
+            }.awaitAll()
         }
+
+        val resultMap = results.associateBy { it.url }
+        _radioStreamResults.value = resultMap
+
+        // Log each stream URL individually with its reachability and HTTP code or error
+        results.forEach { res ->
+            if (res.isReachable == true) {
+                logger.info(AppFeature.SPIRIT_BOX_RADIO, "Reachable (${res.statusDetail}) — ${res.url}")
+            } else {
+                logger.warn(AppFeature.SPIRIT_BOX_RADIO, "Unreachable (${res.statusDetail}) — ${res.url}")
+            }
+        }
+
+        val reachable = results.count { it.isReachable == true }
+        val summary = formatStreamResultsSummary(urls, resultMap)
         if (reachable > 0) {
-            logger.reportSuccess(AppFeature.SPIRIT_BOX_RADIO, "Internet radio stream reachable ($reachable/${urls.size} checked)")
+            logger.reportSuccess(AppFeature.SPIRIT_BOX_RADIO, summary)
         } else {
-            logger.reportFailure(AppFeature.SPIRIT_BOX_RADIO, "Stream reachability failed: $lastErr")
+            logger.reportFailure(AppFeature.SPIRIT_BOX_RADIO, summary)
         }
     }
 
-    private suspend fun testSpiritBoxLocalAudio() {
-        val wavs = repository.getAllRecordingsOnce().filter {
-            it.format.equals("WAV", ignoreCase = true) && File(it.filePath).exists()
+    private fun checkSingleRadioStreamSync(urlStr: String): RadioStreamCheckResult {
+        val now = System.currentTimeMillis()
+        val parsedUrl = runCatching { URL(urlStr) }.getOrElse { e ->
+            return RadioStreamCheckResult(
+                url = urlStr,
+                isReachable = false,
+                httpCode = null,
+                statusDetail = "Invalid URL: ${e.message ?: "malformed"}",
+                checkedAtMillis = now
+            )
         }
-        if (wavs.isNotEmpty()) {
-            logger.reportSuccess(AppFeature.SPIRIT_BOX_LOCAL, "${wavs.size} local WAV file(s) ready for random fragments")
+
+        var headCode: Int? = null
+        var headErr: String? = null
+        try {
+            val conn = (parsedUrl.openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 4000
+                readTimeout = 4000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "FaintRec/1.0")
+            }
+            try {
+                val code = conn.responseCode
+                headCode = code
+                if (code in 200..399) {
+                    return RadioStreamCheckResult(
+                        url = urlStr,
+                        isReachable = true,
+                        httpCode = code,
+                        statusDetail = "HTTP $code",
+                        checkedAtMillis = now
+                    )
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            headErr = e.message?.take(90) ?: e::class.simpleName ?: "Network error"
+        }
+
+        // Many Icecast/Shoutcast radio streams reject HEAD (400/403/405/501) or drop HEAD connections;
+        // verify with a tiny ranged GET without downloading the stream body.
+        val shouldTryGet = headCode == null || headCode in setOf(400, 403, 405, 501)
+        if (shouldTryGet) {
+            try {
+                val conn = (parsedUrl.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 4000
+                    readTimeout = 4000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "FaintRec/1.0")
+                    setRequestProperty("Range", "bytes=0-1")
+                    setRequestProperty("Icy-MetaData", "0")
+                }
+                try {
+                    val code = conn.responseCode
+                    if (code in 200..399) {
+                        return RadioStreamCheckResult(
+                            url = urlStr,
+                            isReachable = true,
+                            httpCode = code,
+                            statusDetail = "HTTP $code",
+                            checkedAtMillis = now
+                        )
+                    }
+                    val msg = conn.responseMessage?.takeIf { it.isNotBlank() }?.let { " $it" } ?: ""
+                    return RadioStreamCheckResult(
+                        url = urlStr,
+                        isReachable = false,
+                        httpCode = code,
+                        statusDetail = "HTTP $code$msg",
+                        checkedAtMillis = now
+                    )
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                val errMsg = e.message?.take(90) ?: e::class.simpleName ?: "Network unreachable"
+                return RadioStreamCheckResult(
+                    url = urlStr,
+                    isReachable = false,
+                    httpCode = headCode,
+                    statusDetail = headCode?.let { "HTTP $it ($errMsg)" } ?: errMsg,
+                    checkedAtMillis = now
+                )
+            }
+        }
+
+        return RadioStreamCheckResult(
+            url = urlStr,
+            isReachable = false,
+            httpCode = headCode,
+            statusDetail = headCode?.let { "HTTP $it" } ?: (headErr ?: "Unreachable"),
+            checkedAtMillis = now
+        )
+    }
+
+    private fun formatStreamResultsSummary(
+        urls: List<String>,
+        results: Map<String, RadioStreamCheckResult>
+    ): String {
+        val reachable = urls.count { results[it]?.isReachable == true }
+        val checked = urls.count { results[it]?.isReachable != null }
+        val perStream = urls.joinToString(" | ") { u ->
+            val r = results[u]
+            val shortLabel = runCatching {
+                val parsed = URL(u)
+                val seg = parsed.path.trim('/').substringAfterLast('/').ifBlank { parsed.host }
+                "${parsed.host}/$seg".trimEnd('/')
+            }.getOrDefault(u)
+            when (r?.isReachable) {
+                true -> "$shortLabel: OK (${r.statusDetail})"
+                false -> "$shortLabel: FAIL (${r.statusDetail})"
+                null -> "$shortLabel: Not tested"
+            }
+        }
+        return "$reachable/${urls.size} reachable ($checked/${urls.size} checked) — $perStream"
+    }
+
+    private suspend fun testSpiritBoxLocalAudio() {
+        val report = localAudioSource.scanLibraryWavs()
+        val breakdown = report.formatPerStorageSummary()
+        if (report.validWavs.isNotEmpty()) {
+            val sampleFrag = localAudioSource.readRandomFragment(report.validWavs)
+            if (sampleFrag != null && sampleFrag.samples.isNotEmpty()) {
+                val durStr = String.format(Locale.US, "%.2fs", sampleFrag.durationSec)
+                logger.reportSuccess(
+                    AppFeature.SPIRIT_BOX_LOCAL,
+                    "${report.validWavs.size} valid WAV(s) ready (verified $durStr fragment from \"${sampleFrag.title}\"; $breakdown)"
+                )
+            } else {
+                logger.reportSuccess(
+                    AppFeature.SPIRIT_BOX_LOCAL,
+                    "${report.validWavs.size} valid WAV(s) ready ($breakdown)"
+                )
+            }
         } else {
-            logger.reportNotSupported(AppFeature.SPIRIT_BOX_LOCAL, "No local WAV recordings in Library yet")
+            logger.reportNotSupported(
+                AppFeature.SPIRIT_BOX_LOCAL,
+                "Not supported: no recordings yet ($breakdown)"
+            )
         }
     }
 

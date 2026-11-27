@@ -1,5 +1,9 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -16,6 +20,37 @@ val hasNdkAndCmake = sdkRoot != null &&
   File(sdkRoot, "ndk").let { it.exists() && (it.listFiles()?.isNotEmpty() == true) } &&
   File(sdkRoot, "cmake").let { it.exists() && (it.listFiles()?.isNotEmpty() == true) }
 
+val rawDevPin: String? = run {
+  fun readKeyFromFile(file: File, key: String): String? {
+    if (!file.exists() || !file.isFile) return null
+    val props = Properties()
+    file.inputStream().use { props.load(it) }
+    return props.getProperty(key)?.trim()?.trim('"', '\'')
+  }
+
+  val candidate = System.getenv("DEV_PIN")?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: readKeyFromFile(File(rootDir, ".env"), "DEV_PIN")?.takeIf { it.isNotEmpty() }
+    ?: providers.gradleProperty("DEV_PIN").orNull?.trim()?.takeIf { it.isNotEmpty() }
+    ?: readKeyFromFile(File(rootDir, "local.properties"), "DEV_PIN")?.takeIf { it.isNotEmpty() }
+
+  candidate?.takeUnless {
+    it.equals("DEV_PIN_DEFAULT_VALUE", ignoreCase = true) ||
+      it.equals("YOUR_DEV_PIN", ignoreCase = true)
+  }
+}
+
+val (devPinSaltHex, devPinHashHex) = if (!rawDevPin.isNullOrBlank()) {
+  val saltBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+  val saltHex = saltBytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+  val digest = MessageDigest.getInstance("SHA-256")
+  val hashBytes = digest.digest("$saltHex:$rawDevPin".toByteArray(StandardCharsets.UTF_8))
+  val hashHex = hashBytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+  saltHex to hashHex
+} else {
+  "" to ""
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -25,7 +60,10 @@ android {
     minSdk = 26
     targetSdk = 36
     versionCode = 1
-    versionName = "1.0"
+    versionName = "1.0.0"
+
+    buildConfigField("String", "DEV_PIN_SALT", "\"$devPinSaltHex\"")
+    buildConfigField("String", "DEV_PIN_HASH", "\"$devPinHashHex\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -105,6 +143,7 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  ignoreList.add("DEV_PIN")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

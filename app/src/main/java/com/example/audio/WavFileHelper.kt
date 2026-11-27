@@ -1,6 +1,7 @@
 package com.example.audio
 
 import java.io.File
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -205,21 +206,73 @@ object WavFileHelper {
         return alignedDataBytes
     }
 
+    private fun isValidWavParams(
+        formatCode: Int,
+        sampleRate: Int,
+        channels: Int,
+        bitsPerSample: Int,
+        dataSize: Long
+    ): Boolean {
+        val supportedFmt = formatCode == FORMAT_PCM || formatCode == FORMAT_IEEE_FLOAT || formatCode == 0xFFFE
+        val validRate = sampleRate in 4000..384000
+        val validChannels = channels in 1..8
+        val validBits = bitsPerSample in setOf(8, 16, 24, 32)
+        return supportedFmt && validRate && validChannels && validBits && dataSize > 0L
+    }
+
+    private fun readChannelFully(channel: FileChannel, dst: ByteBuffer, startOffset: Long): Int {
+        var pos = startOffset
+        var total = 0
+        while (dst.hasRemaining()) {
+            val n = channel.read(dst, pos)
+            if (n <= 0) break
+            pos += n
+            total += n
+        }
+        return total
+    }
+
+    private fun readStreamFully(input: InputStream, buf: ByteArray, offset: Int = 0, len: Int = buf.size): Int {
+        var total = 0
+        while (total < len) {
+            val n = input.read(buf, offset + total, len - total)
+            if (n < 0) break
+            total += n
+        }
+        return total
+    }
+
+    private fun skipStreamBytes(input: InputStream, bytesToSkip: Long): Boolean {
+        var remaining = bytesToSkip
+        val scratch = ByteArray(4096)
+        while (remaining > 0L) {
+            val skipped = input.skip(remaining)
+            if (skipped > 0L) {
+                remaining -= skipped
+            } else {
+                val r = input.read(scratch, 0, min(remaining, scratch.size.toLong()).toInt())
+                if (r < 0) return false
+                remaining -= r
+            }
+        }
+        return true
+    }
+
     fun parseWavInfo(channel: FileChannel): WavInfo? {
-        val totalSize = channel.size()
+        val totalSize = runCatching { channel.size() }.getOrDefault(-1L)
         if (totalSize < 44L) return null
         return try {
             val riff = ByteBuffer.allocate(12)
-            channel.read(riff, 0L)
-            if (riff.position() != 12) return null
+            if (readChannelFully(channel, riff, 0L) != 12) return null
             val riffArr = riff.array()
             if (String(riffArr, 0, 4, Charsets.US_ASCII) != "RIFF" ||
                 String(riffArr, 8, 4, Charsets.US_ASCII) != "WAVE"
             ) return null
 
-            var sampleRate = 48000
-            var channels = 1
-            var bitsPerSample = 16
+            var formatCode = 0
+            var sampleRate = 0
+            var channels = 0
+            var bitsPerSample = 0
             var isFloat = false
             var foundFmt = false
             var dataOffset = -1L
@@ -229,7 +282,7 @@ object WavFileHelper {
             val chunkHdr = ByteBuffer.allocate(8)
             while (pos + 8 <= totalSize) {
                 chunkHdr.clear()
-                if (channel.read(chunkHdr, pos) != 8) break
+                if (readChannelFully(channel, chunkHdr, pos) != 8) break
                 pos += 8
                 val hdrArr = chunkHdr.array()
                 val chunkId = String(hdrArr, 0, 4, Charsets.US_ASCII)
@@ -238,11 +291,12 @@ object WavFileHelper {
 
                 when (chunkId) {
                     "fmt " -> {
+                        if (chunkSize < 16L) return null
                         val readLen = min(chunkSize, 40L).toInt()
                         val fmtBuf = ByteBuffer.allocate(readLen)
-                        channel.read(fmtBuf, pos)
+                        if (readChannelFully(channel, fmtBuf, pos) < 16) return null
                         val bb = ByteBuffer.wrap(fmtBuf.array()).order(ByteOrder.LITTLE_ENDIAN)
-                        val formatCode = bb.short.toInt() and 0xFFFF
+                        formatCode = bb.short.toInt() and 0xFFFF
                         channels = bb.short.toInt() and 0xFFFF
                         sampleRate = bb.int
                         bb.int
@@ -255,7 +309,7 @@ object WavFileHelper {
                     }
                     "data" -> {
                         dataOffset = pos
-                        dataSize = min(chunkSize, totalSize - dataOffset)
+                        dataSize = min(chunkSize, (totalSize - dataOffset).coerceAtLeast(0L))
                         break
                     }
                     else -> {
@@ -263,7 +317,79 @@ object WavFileHelper {
                     }
                 }
             }
-            if (!foundFmt || dataOffset < 0) return null
+            if (!foundFmt || dataOffset < 0 || !isValidWavParams(formatCode, sampleRate, channels, bitsPerSample, dataSize)) {
+                return null
+            }
+            WavInfo(sampleRate, channels, bitsPerSample, isFloat, dataOffset, dataSize)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses RIFF/WAVE header sequentially from an [InputStream] (for non-seekable ContentResolver streams).
+     */
+    fun parseWavInfo(inputStream: InputStream, totalBytesHint: Long = -1L): WavInfo? {
+        return try {
+            val riff = ByteArray(12)
+            if (readStreamFully(inputStream, riff) != 12) return null
+            if (String(riff, 0, 4, Charsets.US_ASCII) != "RIFF" ||
+                String(riff, 8, 4, Charsets.US_ASCII) != "WAVE"
+            ) return null
+
+            var formatCode = 0
+            var sampleRate = 0
+            var channels = 0
+            var bitsPerSample = 0
+            var isFloat = false
+            var foundFmt = false
+            var dataOffset = -1L
+            var dataSize = 0L
+            var pos = 12L
+
+            val chunkHdr = ByteArray(8)
+            while (readStreamFully(inputStream, chunkHdr) == 8) {
+                pos += 8
+                val chunkId = String(chunkHdr, 0, 4, Charsets.US_ASCII)
+                val chunkSize = ByteBuffer.wrap(chunkHdr, 4, 4)
+                    .order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xFFFF_FFFFL
+
+                when (chunkId) {
+                    "fmt " -> {
+                        if (chunkSize < 16L) return null
+                        val readLen = min(chunkSize, 40L).toInt()
+                        val fmtBytes = ByteArray(readLen)
+                        if (readStreamFully(inputStream, fmtBytes) < 16) return null
+                        val bb = ByteBuffer.wrap(fmtBytes).order(ByteOrder.LITTLE_ENDIAN)
+                        formatCode = bb.short.toInt() and 0xFFFF
+                        channels = bb.short.toInt() and 0xFFFF
+                        sampleRate = bb.int
+                        bb.int
+                        bb.short
+                        bitsPerSample = bb.short.toInt() and 0xFFFF
+                        isFloat = formatCode == FORMAT_IEEE_FLOAT ||
+                            (formatCode == 0xFFFE && bitsPerSample == 32)
+                        foundFmt = true
+                        val rem = (chunkSize - readLen) + (chunkSize and 1L)
+                        if (rem > 0L && !skipStreamBytes(inputStream, rem)) return null
+                        pos += chunkSize + (chunkSize and 1L)
+                    }
+                    "data" -> {
+                        dataOffset = pos
+                        val maxAvail = if (totalBytesHint > dataOffset) totalBytesHint - dataOffset else chunkSize
+                        dataSize = min(chunkSize, maxAvail)
+                        break
+                    }
+                    else -> {
+                        val padded = chunkSize + (chunkSize and 1L)
+                        if (padded > 0L && !skipStreamBytes(inputStream, padded)) break
+                        pos += padded
+                    }
+                }
+            }
+            if (!foundFmt || dataOffset < 0 || !isValidWavParams(formatCode, sampleRate, channels, bitsPerSample, dataSize)) {
+                return null
+            }
             WavInfo(sampleRate, channels, bitsPerSample, isFloat, dataOffset, dataSize)
         } catch (_: Exception) {
             null
@@ -347,9 +473,10 @@ object WavFileHelper {
                 val waveTag = String(riff, 8, 4, Charsets.US_ASCII)
                 if (riffTag != "RIFF" || waveTag != "WAVE") return null
 
-                var sampleRate = 48000
-                var channels = 1
-                var bitsPerSample = 16
+                var formatCode = 0
+                var sampleRate = 0
+                var channels = 0
+                var bitsPerSample = 0
                 var isFloat = false
                 var foundFmt = false
                 var dataOffset = -1L
@@ -364,10 +491,11 @@ object WavFileHelper {
 
                     when (chunkId) {
                         "fmt " -> {
+                            if (chunkSize < 16L) return null
                             val fmtBytes = ByteArray(min(chunkSize, 40L).toInt())
                             raf.readFully(fmtBytes)
                             val bb = ByteBuffer.wrap(fmtBytes).order(ByteOrder.LITTLE_ENDIAN)
-                            val formatCode = bb.short.toInt() and 0xFFFF
+                            formatCode = bb.short.toInt() and 0xFFFF
                             channels = bb.short.toInt() and 0xFFFF
                             sampleRate = bb.int
                             bb.int // byteRate
@@ -376,12 +504,12 @@ object WavFileHelper {
                             isFloat = formatCode == FORMAT_IEEE_FLOAT ||
                                 (formatCode == 0xFFFE && bitsPerSample == 32)
                             foundFmt = true
-                            val rem = chunkSize - fmtBytes.size
+                            val rem = (chunkSize - fmtBytes.size) + (chunkSize and 1L)
                             if (rem > 0) raf.seek(raf.filePointer + rem)
                         }
                         "data" -> {
                             dataOffset = raf.filePointer
-                            dataSize = min(chunkSize, raf.length() - dataOffset)
+                            dataSize = min(chunkSize, (raf.length() - dataOffset).coerceAtLeast(0L))
                             break
                         }
                         else -> {
@@ -390,7 +518,9 @@ object WavFileHelper {
                         }
                     }
                 }
-                if (!foundFmt || dataOffset < 0) return null
+                if (!foundFmt || dataOffset < 0 || !isValidWavParams(formatCode, sampleRate, channels, bitsPerSample, dataSize)) {
+                    return null
+                }
                 WavInfo(sampleRate, channels, bitsPerSample, isFloat, dataOffset, dataSize)
             }
         } catch (_: Exception) {
@@ -417,8 +547,60 @@ object WavFileHelper {
         raf.seek(byteOffset)
         val actuallyRead = raf.read(raw)
         if (actuallyRead <= 0) return 0
+        return decodePcmBytesToFloat(raw, actuallyRead, info, outInterleaved)
+    }
 
+    /**
+     * Reads [frameCount] interleaved frames starting at [startFrame] from a seekable [FileChannel]
+     * (works with both direct files and ContentResolver ParcelFileDescriptors for MediaStore / SAF URIs).
+     */
+    fun readFramesAsFloat(
+        channel: FileChannel,
+        info: WavInfo,
+        startFrame: Long,
+        frameCount: Int,
+        outInterleaved: FloatArray
+    ): Int {
+        if (startFrame < 0 || startFrame >= info.totalFrames || frameCount <= 0) return 0
+        val readableFrames = min(frameCount.toLong(), info.totalFrames - startFrame).toInt()
+        val byteOffset = info.dataOffset + startFrame * info.frameSizeBytes
+        val bytesToRead = readableFrames * info.frameSizeBytes
+        val raw = ByteArray(bytesToRead)
+        val actuallyRead = readChannelFully(channel, ByteBuffer.wrap(raw), byteOffset)
+        if (actuallyRead <= 0) return 0
+        return decodePcmBytesToFloat(raw, actuallyRead, info, outInterleaved)
+    }
+
+    /**
+     * Reads [frameCount] interleaved frames starting at [startFrame] sequentially from an [InputStream]
+     * positioned at byte 0 of the WAV file (fallback for non-seekable ContentResolver streams).
+     */
+    fun readFramesAsFloat(
+        inputStream: InputStream,
+        info: WavInfo,
+        startFrame: Long,
+        frameCount: Int,
+        outInterleaved: FloatArray
+    ): Int {
+        if (startFrame < 0 || startFrame >= info.totalFrames || frameCount <= 0) return 0
+        val readableFrames = min(frameCount.toLong(), info.totalFrames - startFrame).toInt()
+        val byteOffset = info.dataOffset + startFrame * info.frameSizeBytes
+        if (!skipStreamBytes(inputStream, byteOffset)) return 0
+        val bytesToRead = readableFrames * info.frameSizeBytes
+        val raw = ByteArray(bytesToRead)
+        val actuallyRead = readStreamFully(inputStream, raw)
+        if (actuallyRead <= 0) return 0
+        return decodePcmBytesToFloat(raw, actuallyRead, info, outInterleaved)
+    }
+
+    private fun decodePcmBytesToFloat(
+        raw: ByteArray,
+        actuallyRead: Int,
+        info: WavInfo,
+        outInterleaved: FloatArray
+    ): Int {
         val framesRead = actuallyRead / info.frameSizeBytes
+        if (framesRead <= 0) return 0
         val sampleCount = framesRead * info.channels
         val bb = ByteBuffer.wrap(raw, 0, framesRead * info.frameSizeBytes).order(ByteOrder.LITTLE_ENDIAN)
 

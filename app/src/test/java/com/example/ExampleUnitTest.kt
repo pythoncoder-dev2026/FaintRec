@@ -8,6 +8,7 @@ import com.example.audio.PreRollBuffer
 import com.example.audio.WavCuePoint
 import com.example.audio.WavFileHelper
 import com.example.data.AppFeature
+import com.example.data.FaintRecSettings
 import com.example.data.NoiseAddParams
 import com.example.data.NoiseLevelParams
 import com.example.data.NoiseProfilePayload
@@ -16,17 +17,24 @@ import com.example.data.NoiseType
 import com.example.editor.BiquadFilter
 import com.example.editor.NoiseAddSynthesizer
 import com.example.editor.SpectralNoiseProcessor
+import com.example.logging.DevModeSessionGuard
+import com.example.logging.DevPinVerifier
 import com.example.spiritbox.SpiritBandMode
+import com.example.spiritbox.SpiritBoxConfig
 import com.example.spiritbox.SpiritBoxDialMath
+import com.example.spiritbox.SpiritBoxLocalAudioSource
 import com.example.spiritbox.SweepDirection
 import com.example.util.AudioMath
 import com.example.util.MarkerDebouncer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
 import kotlin.math.PI
 import kotlin.math.abs
@@ -359,7 +367,150 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun spiritBoxRecorderFeatureIsRegistered() {
+    fun spiritBoxRecorderFeatureIsRegisteredAndDefaultsOn() {
         assertEquals(AppFeature.SPIRIT_BOX_RECORDER, AppFeature.fromId("spirit_box_recorder"))
+        assertTrue("SpiritBoxConfig.recorderEnabled must default ON", SpiritBoxConfig().recorderEnabled)
+        assertTrue("FaintRecSettings.spiritBoxRecorderEnabled must default ON", FaintRecSettings().spiritBoxRecorderEnabled)
+    }
+
+    @Test
+    fun wavFileChannelAndInputStreamReadingAndCorruptRejection() {
+        val tmp = File.createTempFile("faintrec_channel_", ".wav")
+        try {
+            val frames = 1600
+            val input = FloatArray(frames) { i -> sin(2.0 * PI * 440.0 * i / 48000.0).toFloat() * 0.4f }
+            RandomAccessFile(tmp, "rw").use { raf ->
+                WavFileHelper.writePlaceholderHeader(raf.channel, 48000, 1, 16, isFloat = false)
+                val written = WavFileHelper.writeFloatSamples(raf.channel, input, frames, writeAsFloat32 = false)
+                WavFileHelper.patchWavHeaderSizes(raf.channel, written)
+            }
+
+            // Read back via FileChannel (same path used for ContentResolver PFD)
+            FileInputStream(tmp).use { fis ->
+                val info = WavFileHelper.parseWavInfo(fis.channel)
+                assertNotNull(info)
+                assertEquals(frames.toLong(), info!!.totalFrames)
+                val out = FloatArray(400)
+                val read = WavFileHelper.readFramesAsFloat(fis.channel, info, 200L, 400, out)
+                assertEquals(400, read)
+                assertEquals(input[200], out[0], 1e-3f)
+                assertEquals(input[599], out[399], 1e-3f)
+            }
+
+            // Read back via InputStream (same path used for non-seekable SAF providers)
+            val bytes = tmp.readBytes()
+            val streamInfo = WavFileHelper.parseWavInfo(ByteArrayInputStream(bytes), totalBytesHint = bytes.size.toLong())
+            assertNotNull(streamInfo)
+            val outStream = FloatArray(256)
+            val streamRead = WavFileHelper.readFramesAsFloat(ByteArrayInputStream(bytes), streamInfo!!, 100L, 256, outStream)
+            assertEquals(256, streamRead)
+            assertEquals(input[100], outStream[0], 1e-3f)
+
+            // Corrupt/non-WAV bytes must be rejected
+            val badInfo = WavFileHelper.parseWavInfo(ByteArrayInputStream("NOT_A_WAV_FILE_HEADER_123456789012345678901234".toByteArray()))
+            assertNull(badInfo)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    @Test
+    fun spiritBoxLocalFragmentWindowAndResamplingRespectBounds() {
+        val sr = 48000
+        val totalFrames = sr * 5L // 5 second WAV
+        val rng = Random(12345)
+        repeat(25) {
+            val (startFrame, count) = SpiritBoxLocalAudioSource.pickFragmentWindow(totalFrames, sr, 0.3f, 2.0f, rng)
+            assertTrue("Fragment count should be between 0.3s and 2.0s, got $count", count in (0.3f * sr).toInt()..(2.0f * sr).toInt())
+            assertTrue("Start + count must stay within file bounds", startFrame >= 0L && startFrame + count <= totalFrames)
+        }
+        // Short 0.2s file must clamp cleanly without overflow
+        val shortFrames = (sr * 0.2f).toLong()
+        val (shortStart, shortCount) = SpiritBoxLocalAudioSource.pickFragmentWindow(shortFrames, sr, 0.3f, 2.0f, rng)
+        assertEquals(0L, shortStart)
+        assertEquals(shortFrames.toInt(), shortCount)
+
+        // Stereo 44.1 kHz downmix + resample to 48 kHz mono
+        val srcFrames = 4410
+        val stereo = FloatArray(srcFrames * 2) { idx -> if (idx % 2 == 0) 0.5f else 0.3f }
+        val resampled = SpiritBoxLocalAudioSource.downmixAndResampleToMono(stereo, srcFrames, 2, 44100, 48000)
+        assertEquals(4800, resampled.size)
+        assertEquals(0.4f, resampled[100], 1e-3f)
+    }
+
+    @Test
+    fun devPinVerifierUsesSaltedSha256AndDisabledWhenUnconfigured() {
+        assertFalse(DevPinVerifier.isConfigured("", ""))
+        assertFalse(DevPinVerifier.isConfigured("salt", "short"))
+        assertFalse(DevPinVerifier.verifyPinConstantTime("1234", "", ""))
+
+        val salt = "0123456789abcdef0123456789abcdef"
+        val hash = DevPinVerifier.computeSaltedSha256Hex(salt, "4829")
+        assertEquals(64, hash.length)
+        assertTrue(DevPinVerifier.isConfigured(salt, hash))
+        assertTrue(DevPinVerifier.verifyPinConstantTime("4829", salt, hash))
+        assertFalse(DevPinVerifier.verifyPinConstantTime("4828", salt, hash))
+        assertFalse(DevPinVerifier.verifyPinConstantTime("", salt, hash))
+    }
+
+    @Test
+    fun devModeSessionGuardEnforcesTapsLockoutAndBackgroundExpiry() {
+        // Unconfigured guard ignores 7 rapid taps completely
+        val disabledGuard = DevModeSessionGuard("", "")
+        repeat(10) { i -> disabledGuard.onVersionTap(1_000L + i * 200L) }
+        assertFalse(disabledGuard.state.value.isConfigured)
+        assertFalse(disabledGuard.state.value.showPinDialog)
+        assertFalse(disabledGuard.state.value.isUnlocked)
+
+        val salt = "fedcba9876543210fedcba9876543210"
+        val hash = DevPinVerifier.computeSaltedSha256Hex(salt, "9042")
+        val guard = DevModeSessionGuard(salt, hash)
+
+        // 6 rapid taps do NOT open the dialog
+        repeat(6) { i -> guard.onVersionTap(1_000L + i * 300L) }
+        assertFalse(guard.state.value.showPinDialog)
+
+        // Gap > 2s resets tap streak
+        guard.onVersionTap(1_000L + 5 * 300L + 2_500L)
+        assertFalse(guard.state.value.showPinDialog)
+
+        // 6 more rapid taps after reset reach 7 -> opens PIN dialog
+        val base = 5_000L
+        repeat(6) { i -> guard.onVersionTap(base + (i + 1) * 300L) }
+        assertTrue(guard.state.value.showPinDialog)
+
+        // 3 wrong attempts trigger a 30-second lockout
+        val t0 = 10_000L
+        assertFalse(guard.submitPin("0000", t0))
+        assertTrue(guard.state.value.showIncorrectPinError)
+        assertEquals(0, guard.state.value.lockoutRemainingSeconds(t0))
+
+        assertFalse(guard.submitPin("1111", t0 + 500L))
+        assertEquals(0, guard.state.value.lockoutRemainingSeconds(t0 + 500L))
+
+        assertFalse(guard.submitPin("2222", t0 + 1_000L))
+        assertTrue(guard.state.value.lockoutRemainingSeconds(t0 + 1_000L) in 29..30)
+
+        // Even the correct PIN is rejected while locked out
+        assertFalse(guard.submitPin("9042", t0 + 10_000L))
+        assertFalse(guard.state.value.isUnlocked)
+
+        // After 30 seconds pass, correct PIN unlocks and opens Log
+        val afterLockout = t0 + 1_000L + DevModeSessionGuard.LOCKOUT_DURATION_MS
+        assertTrue(guard.submitPin("9042", afterLockout))
+        assertTrue(guard.state.value.isUnlocked)
+        assertTrue(guard.state.value.isLogOpen)
+        assertFalse(guard.state.value.showPinDialog)
+
+        // Background <= 5 minutes stays unlocked
+        guard.onAppBackgrounded(afterLockout + 1_000L)
+        guard.onAppForegrounded(afterLockout + 1_000L + 4L * 60L * 1000L)
+        assertTrue(guard.state.value.isUnlocked)
+
+        // Background > 5 minutes locks automatically
+        guard.onAppBackgrounded(afterLockout + 500_000L)
+        guard.onAppForegrounded(afterLockout + 500_000L + DevModeSessionGuard.BACKGROUND_LOCK_TIMEOUT_MS + 1L)
+        assertFalse(guard.state.value.isUnlocked)
+        assertFalse(guard.state.value.isLogOpen)
     }
 }

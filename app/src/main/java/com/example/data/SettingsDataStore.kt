@@ -68,6 +68,7 @@ class SettingsDataStore(private val context: Context) {
         val FFT_LOG = booleanPreferencesKey("fft_log_scale")
         val SPIRIT_BOX_STREAMS = stringPreferencesKey("spirit_box_stream_urls")
         val SPIRIT_BOX_RECORDER_ENABLED = booleanPreferencesKey("spirit_box_recorder_enabled")
+        val SPIRIT_BOX_RECORDER_USER_SET = booleanPreferencesKey("spirit_box_recorder_user_set")
         val SPIRIT_BOX_RECORD_SWEEP = booleanPreferencesKey("spirit_box_record_sweep_output")
         val SPIRIT_BOX_RECORD_MIC = booleanPreferencesKey("spirit_box_record_mic_track")
         val MP3_NOTICE_DISMISSED = booleanPreferencesKey("mp3_unavailable_notice_dismissed")
@@ -80,6 +81,12 @@ class SettingsDataStore(private val context: Context) {
         val savedStreams = prefs[Keys.SPIRIT_BOX_STREAMS]?.let { raw ->
             runCatching { json.decodeFromString<List<String>>(raw) }.getOrNull()
         } ?: DEFAULT_SPIRIT_BOX_STREAMS
+        val recorderUserSet = prefs[Keys.SPIRIT_BOX_RECORDER_USER_SET] ?: false
+        val recorderEnabled = if (recorderUserSet) {
+            prefs[Keys.SPIRIT_BOX_RECORDER_ENABLED] ?: true
+        } else {
+            true
+        }
 
         FaintRecSettings(
             themePreference = ThemePreference.entries.firstOrNull {
@@ -99,7 +106,7 @@ class SettingsDataStore(private val context: Context) {
             fftWindow = prefs[Keys.FFT_WINDOW] ?: "HANN",
             fftLogScale = prefs[Keys.FFT_LOG] ?: true,
             spiritBoxStreamUrls = savedStreams,
-            spiritBoxRecorderEnabled = prefs[Keys.SPIRIT_BOX_RECORDER_ENABLED] ?: true,
+            spiritBoxRecorderEnabled = recorderEnabled,
             spiritBoxRecordSweepOutput = prefs[Keys.SPIRIT_BOX_RECORD_SWEEP] ?: true,
             spiritBoxRecordMicTrack = prefs[Keys.SPIRIT_BOX_RECORD_MIC] ?: false,
             mp3UnavailableNoticeDismissed = prefs[Keys.MP3_NOTICE_DISMISSED] ?: false,
@@ -167,6 +174,7 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setSpiritBoxRecorderEnabled(enabled: Boolean) {
         context.settingsDataStore.edit {
             it[Keys.SPIRIT_BOX_RECORDER_ENABLED] = enabled
+            it[Keys.SPIRIT_BOX_RECORDER_USER_SET] = true
         }
     }
 

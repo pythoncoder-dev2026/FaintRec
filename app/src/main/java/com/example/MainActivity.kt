@@ -10,9 +10,9 @@ import android.content.res.Resources
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,19 +20,23 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FactCheck
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -41,6 +45,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -67,12 +72,12 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.data.AppFeature
 import com.example.logging.AppLogger
+import com.example.logging.DevModeController
 import com.example.spiritbox.SpiritBoxEngine
 import com.example.ui.navigation.AnalyzeRoute
 import com.example.ui.navigation.ConverterRoute
 import com.example.ui.navigation.EditorRoute
 import com.example.ui.navigation.LibraryRoute
-import com.example.ui.navigation.LogRoute
 import com.example.ui.navigation.RecordRoute
 import com.example.ui.navigation.SettingsRoute
 import com.example.ui.navigation.SpiritBoxRoute
@@ -102,6 +107,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: FaintRecViewModel by viewModels()
     @Inject lateinit var spiritBoxEngine: SpiritBoxEngine
     @Inject lateinit var appLogger: AppLogger
+    @Inject lateinit var devModeController: DevModeController
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,11 +129,22 @@ class MainActivity : ComponentActivity() {
                 FaintRecTheme(themePreference = settings.themePreference) {
                     FaintRecRootApp(
                         viewModel = viewModel,
+                        devModeController = devModeController,
                         activity = this@MainActivity
                     )
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        devModeController.onAppForegrounded()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        devModeController.onAppBackgrounded()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -215,24 +232,20 @@ private data class TopNavItem(
     val tag: String
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FaintRecRootApp(
     viewModel: FaintRecViewModel,
+    devModeController: DevModeController,
     activity: ComponentActivity
 ) {
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
+    val devModeState by devModeController.state.collectAsStateWithLifecycle()
 
     var hasMicPerm by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
-    var hasNotifPerm by remember {
-        mutableStateOf(
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
         )
     }
@@ -242,10 +255,6 @@ private fun FaintRecRootApp(
     ) { results ->
         hasMicPerm = results[Manifest.permission.RECORD_AUDIO] == true ||
             ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        hasNotifPerm = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            results[Manifest.permission.POST_NOTIFICATIONS] == true ||
-            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
         viewModel.reportMicPermissionStatus(hasMicPerm)
     }
@@ -285,7 +294,6 @@ private fun FaintRecRootApp(
             TopNavItem(LibraryRoute, R.string.nav_library, Icons.Default.LibraryMusic, "nav_library"),
             TopNavItem(AnalyzeRoute, R.string.nav_analyze, Icons.Default.GraphicEq, "nav_analyze"),
             TopNavItem(SpiritBoxRoute, R.string.nav_spirit_box, Icons.Default.Radio, "nav_spirit_box"),
-            TopNavItem(LogRoute, R.string.nav_log, Icons.Default.FactCheck, "nav_log"),
             TopNavItem(SettingsRoute, R.string.nav_settings, Icons.Default.Settings, "nav_settings")
         )
     }
@@ -295,7 +303,8 @@ private fun FaintRecRootApp(
     val showTopLevelNav = currentDest?.hasRoute<EditorRoute>() != true &&
         currentDest?.hasRoute<ConverterRoute>() != true
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useNavRail = maxWidth >= 600.dp
 
         Scaffold(
@@ -398,24 +407,12 @@ private fun FaintRecRootApp(
                             onShowSnackbar = { msg -> viewModel.emitSnackbar(msg) }
                         )
                     }
-                    composable<LogRoute> {
-                        LogScreen(
-                            onShowSnackbar = { msg -> viewModel.emitSnackbar(msg) }
-                        )
-                    }
                     composable<SettingsRoute> {
                         SettingsScreen(
                             viewModel = viewModel,
+                            devModeController = devModeController,
                             hasMicPermission = hasMicPerm,
-                            hasNotifPermission = hasNotifPerm,
-                            onRequestPermissions = requestAllPermissions,
-                            onOpenAppSettings = {
-                                val intent = Intent(
-                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                    Uri.fromParts("package", activity.packageName, null)
-                                )
-                                activity.startActivity(intent)
-                            }
+                            onRequestPermissions = requestAllPermissions
                         )
                     }
                     composable<EditorRoute> { entry ->
@@ -443,6 +440,54 @@ private fun FaintRecRootApp(
                         )
                     }
                 }
+            }
+        }
+        }
+
+        // Hidden Developer Mode: guarded Log screen overlay (unreachable via NavHost, intents, or deep links)
+        if (devModeState.isUnlocked && devModeState.isLogOpen) {
+            BackHandler { devModeController.closeLog() }
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                text = stringResource(R.string.log_title),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(
+                                onClick = { devModeController.closeLog() },
+                                modifier = Modifier.testTag("dev_log_back_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.dev_log_back_cd)
+                                )
+                            }
+                        },
+                        actions = {
+                            IconButton(
+                                onClick = { devModeController.lockNow() },
+                                modifier = Modifier.testTag("dev_log_lock_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = stringResource(R.string.dev_log_lock_cd)
+                                )
+                            }
+                        }
+                    )
+                },
+                snackbarHost = { SnackbarHost(snackbarHostState) }
+            ) { logPadding ->
+                LogScreen(
+                    onShowSnackbar = { msg -> viewModel.emitSnackbar(msg) },
+                    modifier = Modifier.padding(logPadding)
+                )
             }
         }
     }

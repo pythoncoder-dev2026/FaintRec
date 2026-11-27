@@ -8,7 +8,6 @@
     <string name="nav_library">लाइब्रेरी</string>
     <string name="nav_analyze">विश्लेषण</string>
     <string name="nav_spirit_box">स्पिरिट बॉक्स</string>
-    <string name="nav_log">लॉग</string>
     <string name="nav_settings">सेटिंग्स</string>
 
     <!-- Recording -->
@@ -25,18 +24,14 @@
     <string name="var_hang_time">हैंग समय</string>
     <string name="var_preroll">2 सेकंड प्री-रोल सक्रिय</string>
     <string name="var_waiting">थ्रेशोल्ड की प्रतीक्षा…</string>
-    <string name="unprocessed_unsupported_warn">यह डिवाइस UNPROCESSED ऑडियो स्रोत का समर्थन नहीं करता। %1$s का उपयोग हो रहा है — सिस्टम DSP धीमी आवाज़ों को कम कर सकता है।</string>
     <string name="bluetooth_mic_warn">ब्लूटूथ माइक की गुणवत्ता और सैंपल दर कम (8–16 kHz) होती है। धीमी ध्वनियों के लिए वायर्ड या USB-C माइक का उपयोग करें।</string>
     <string name="mic_changed_marker">माइक बदला गया</string>
     <string name="mic_disconnected_notice">बाहरी माइक डिस्कनेक्ट हो गया — सुरक्षित रूप से इनबिल्ट माइक पर स्विच किया गया।</string>
-    <string name="no_external_mic_detected">कोई बाहरी माइक नहीं मिला</string>
+    <string name="external_mic_picker_title">बाहरी माइक्रोफ़ोन</string>
 
     <!-- Permissions -->
-    <string name="perm_title">ऑडियो और बैकग्राउंड अनुमतियाँ</string>
     <string name="perm_rationale_mic">FaintRec को 48 kHz+ पर बिना प्रोसेस किए कच्चे ऑडियो को कैप्चर करने के लिए माइक्रोफ़ोन अनुमति की आवश्यकता है।</string>
-    <string name="perm_rationale_notif">स्क्रीन बंद होने पर बैकग्राउंड रिकॉर्डिंग जारी रखने और त्वरित नियंत्रण दिखाने के लिए सूचना अनुमति आवश्यक है।</string>
     <string name="perm_grant">अनुमतियाँ दें</string>
-    <string name="perm_open_settings">ऐप सेटिंग्स खोलें</string>
 
     <!-- Library & Playback -->
     <string name="library_empty_title">अभी कोई रिकॉर्डिंग नहीं</string>
@@ -108,8 +103,7 @@
 
     <!-- Spirit Box -->
     <string name="spirit_box_title">स्पिरिट बॉक्स</string>
-    <string name="spirit_box_disclaimer">मनोरंजन के लिए। परिणाम यादृच्छिक रेडियो/ऑडियो अंश हैं।</string>
-    <string name="spirit_box_headphone_tip">फ़ीडबैक से बचने और श्रवण सुरक्षा के लिए हेडफ़ोन का उपयोग करें।</string>
+    <string name="spirit_box_fun_line">Fun 😊 and Enjoy!</string>
     <string name="spirit_box_start">स्वीप शुरू करें</string>
     <string name="spirit_box_stop">स्वीप रोकें</string>
     <string name="spirit_box_hold">रोकें</string>
@@ -146,9 +140,16 @@
     <!-- Settings -->
     <string name="settings_theme">ऐप थीम</string>
     <string name="settings_language">भाषा</string>
-    <string name="settings_audio_input">ऑडियो इनपुट डिवाइस</string>
     <string name="settings_channels">रिकॉर्डिंग चैनल</string>
     <string name="settings_encoding">PCM बिट गहराई</string>
+    <string name="settings_version_format">संस्करण %1$s</string>
+    <string name="dev_pin_dialog_title">पिन दर्ज करें</string>
+    <string name="dev_pin_label">पिन (PIN)</string>
+    <string name="dev_pin_incorrect">गलत पिन</string>
+    <string name="dev_pin_locked_countdown">बहुत अधिक प्रयास। %1$d सेकंड में पुनः प्रयास करें</string>
+    <string name="dev_pin_unlock">अनलॉक करें</string>
+    <string name="dev_log_back_cd">सेटिंग्स पर वापस जाएँ</string>
+    <string name="dev_log_lock_cd">लॉक करें</string>
     <!-- Log Tab: Feature Health & Event Log -->
     <string name="log_title">फ़ीचर स्वास्थ्य और इवेंट लॉग</string>
     <string name="log_report_label">रिपोर्ट</string>
@@ -172,6 +173,16 @@
     <string name="log_action_clear">साफ़ करें</string>
     <string name="log_clear_confirm_title">इवेंट लॉग साफ़ करें?</string>
     <string name="log_clear_confirm_body">यह सभी सहेजी गई लॉग प्रविष्टियों को स्थायी रूप से हटा देगा। फ़ीचर स्थिति बैज सुरक्षित रहेंगे।</string>
+    <string name="log_stream_reachable">उपलब्ध</string>
+    <string name="log_stream_unreachable">अनुपलब्ध</string>
+    <string name="log_streams_empty">कोई रेडियो स्ट्रीम URL कॉन्फ़िगर नहीं है।</string>
+    <string name="log_stream_edit_title">रेडियो स्ट्रीम URL संपादित करें</string>
+    <string name="log_stream_url_label">स्ट्रीम URL (https://…)</string>
+    <string name="log_stream_save">सहेजें और परीक्षण करें</string>
+    <string name="log_stream_retest_cd">इस स्ट्रीम का परीक्षण करें</string>
+    <string name="log_stream_edit_cd">स्ट्रीम URL संपादित करें</string>
+    <string name="log_stream_remove_cd">स्ट्रीम हटाएँ</string>
+    <string name="log_remove_unreachable_streams">अनुपलब्ध हटाएँ (%1$d)</string>
 
     <!-- Save Location & Storage Management -->
     <string name="notif_channel_storage_alerts">स्टोरेज अलर्ट</string>
@@ -201,5 +212,4 @@
     <string name="storage_badge_private">प्राइवेट</string>
     <string name="storage_badge_public">पब्लिक</string>
     <string name="storage_badge_sd">SD कार्ड</string>
-    <string name="storage_quick_change">बदलें</string>
 </resources>

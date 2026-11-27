@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -87,6 +88,7 @@ class SpiritBoxEngine @Inject constructor(
     private val storageLocationManager: StorageLocationManager,
     private val settingsDataStore: SettingsDataStore,
     private val deviceManager: AudioDeviceManager,
+    private val localAudioSource: SpiritBoxLocalAudioSource,
     private val logger: AppLogger
 ) {
     companion object {
@@ -134,7 +136,7 @@ class SpiritBoxEngine @Inject constructor(
 
     private val radioPlayers = mutableListOf<ExoPlayer>()
     private val radioPlayerUrls = mutableListOf<String>()
-    private val localWavPool = CopyOnWriteArrayList<File>()
+    private val localWavPool = CopyOnWriteArrayList<ValidatedLocalWav>()
     private val ttsFragmentPool = CopyOnWriteArrayList<FloatArray>()
 
     private var ttsEngine: TextToSpeech? = null
@@ -342,10 +344,9 @@ class SpiritBoxEngine @Inject constructor(
         sessionQuestions.clear()
         sessionHopLog.clear()
 
-        // Load local WAV recordings pool asynchronously
-        scope.launch {
-            refreshLocalWavPool()
-            if (config.enableOfflineTts) {
+        // Prepare optional offline TTS fragments asynchronously (local WAV pool is loaded before Hop #1 on sweepThread)
+        if (config.enableOfflineTts) {
+            scope.launch {
                 prepareOfflineTtsFragments()
             }
         }
@@ -624,6 +625,10 @@ class SpiritBoxEngine @Inject constructor(
             var xfadeCursor = 0
 
             try {
+                // Ensure the local WAV pool from Library (all storage types) is loaded before Hop #1
+                if (config.enableLocalAudio) {
+                    runBlocking { refreshLocalWavPool() }
+                }
                 track.play()
                 while (isRunning.get()) {
                     if (focusPaused.get()) {
@@ -673,7 +678,7 @@ class SpiritBoxEngine @Inject constructor(
                             }
                             "LOCAL_AUDIO" -> {
                                 muteAllRadioPlayers()
-                                val slice = readRandomLocalFragment(framesUntilNextHop + xfadeTotalFrames, rng)
+                                val slice = readRandomLocalFragment(rng)
                                 curFragBuf = slice.first
                                 curFragPos = 0
                                 sourceDetail = slice.second
@@ -1089,46 +1094,48 @@ class SpiritBoxEngine @Inject constructor(
 
     private suspend fun refreshLocalWavPool() {
         runCatching {
-            val recs = repository.getAllRecordingsOnce()
-            val wavs = recs
-                .filter { it.format.equals("WAV", ignoreCase = true) }
-                .mapNotNull { rec ->
-                    val direct = rec.filePath.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() && it.length() > 4096L }
-                    direct ?: storageLocationManager.resolveReadableFile(rec)?.takeIf { it.exists() && it.length() > 4096L }
-                }
+            val report = localAudioSource.scanLibraryWavs()
             localWavPool.clear()
-            localWavPool.addAll(wavs)
-            if (wavs.isNotEmpty()) {
-                logger.reportSuccess(AppFeature.SPIRIT_BOX_LOCAL, "Loaded ${wavs.size} local WAV file(s) for Spirit Box")
+            localWavPool.addAll(report.validWavs)
+            val breakdown = report.formatPerStorageSummary()
+            if (report.validWavs.isNotEmpty()) {
+                logger.reportSuccess(
+                    AppFeature.SPIRIT_BOX_LOCAL,
+                    "Loaded ${report.validWavs.size} valid WAV file(s) ($breakdown)"
+                )
+            } else {
+                logger.reportNotSupported(
+                    AppFeature.SPIRIT_BOX_LOCAL,
+                    "Not supported: no recordings yet ($breakdown)"
+                )
             }
         }.onFailure { e ->
             logger.reportFailure(AppFeature.SPIRIT_BOX_LOCAL, "Local WAV scan failed: ${e.message}", e)
         }
     }
 
-    private fun readRandomLocalFragment(desiredFrames: Int, rng: Random): Pair<FloatArray, String> {
-        val pool = localWavPool
+    private fun readRandomLocalFragment(rng: Random): Pair<FloatArray, String> {
+        val pool = localWavPool.toList()
         if (pool.isEmpty()) return FloatArray(0) to "No local WAV"
-        val file = pool[rng.nextInt(pool.size)]
         return runCatching {
-            val info = WavFileHelper.parseWavInfo(file) ?: return FloatArray(0) to file.name
-            val maxStart = (info.totalFrames - desiredFrames).coerceAtLeast(1L)
-            val startFrame = (rng.nextDouble() * maxStart).toLong()
-            val toRead = desiredFrames.coerceAtMost((info.totalFrames - startFrame).toInt().coerceAtLeast(1))
-            val raw = FloatArray(toRead * info.channels)
-            val read = RandomAccessFile(file, "r").use { raf ->
-                WavFileHelper.readFramesAsFloat(raf, info, startFrame, toRead, raw)
+            val fragment = localAudioSource.readRandomFragment(
+                pool = pool,
+                targetSampleRate = SAMPLE_RATE,
+                minDurationSec = SpiritBoxLocalAudioSource.MIN_FRAGMENT_SEC,
+                maxDurationSec = SpiritBoxLocalAudioSource.MAX_FRAGMENT_SEC,
+                rng = rng
+            )
+            if (fragment != null && fragment.samples.isNotEmpty()) {
+                val durLabel = String.format(Locale.US, "%.2fs", fragment.durationSec)
+                logger.reportSuccess(AppFeature.SPIRIT_BOX_LOCAL)
+                fragment.samples to "${fragment.title} ($durLabel)"
+            } else {
+                logger.warn(AppFeature.SPIRIT_BOX_LOCAL, "Skipped missing/corrupt local WAV while picking fragment")
+                FloatArray(0) to "Unavailable WAV"
             }
-            val mono = FloatArray(read) { f ->
-                var s = 0f
-                for (c in 0 until info.channels) s += raw[f * info.channels + c]
-                s / info.channels
-            }
-            logger.reportSuccess(AppFeature.SPIRIT_BOX_LOCAL)
-            mono to file.nameWithoutExtension
         }.getOrElse { e ->
             logger.reportFailure(AppFeature.SPIRIT_BOX_LOCAL, "Failed reading local fragment: ${e.message}", e)
-            FloatArray(0) to file.name
+            FloatArray(0) to "Local WAV error"
         }
     }
 

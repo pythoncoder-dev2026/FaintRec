@@ -1,10 +1,12 @@
 package com.example.ui.screens
 
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,22 +15,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.SdStorage
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -39,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -47,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,35 +58,39 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
 import com.example.R
 import com.example.data.RecordingStorageType
+import com.example.logging.DevModeController
 import com.example.storage.StorageLocationManager
 import com.example.ui.theme.ThemePreference
 import com.example.ui.viewmodel.FaintRecViewModel
 import com.example.util.StorageHelper
+import kotlinx.coroutines.delay
 
 @Composable
 fun SettingsScreen(
     viewModel: FaintRecViewModel,
+    devModeController: DevModeController,
     hasMicPermission: Boolean,
-    hasNotifPermission: Boolean,
     onRequestPermissions: () -> Unit,
-    onOpenAppSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val inputDevices by viewModel.inputDevices.collectAsStateWithLifecycle()
-    val externalInputDevices by viewModel.externalInputDevices.collectAsStateWithLifecycle()
-    val selectedDevice by viewModel.selectedDevice.collectAsStateWithLifecycle()
-    val usbStatus by viewModel.usbPermissionStatus.collectAsStateWithLifecycle()
     val storageInfo by viewModel.storageInfo.collectAsStateWithLifecycle()
     val isMoving by viewModel.isMovingRecordings.collectAsStateWithLifecycle()
     val moveProgressText by viewModel.moveProgressText.collectAsStateWithLifecycle()
     val recordings by viewModel.recordings.collectAsStateWithLifecycle()
+    val devModeState by devModeController.state.collectAsStateWithLifecycle()
 
     var showMoveAllDialog by remember { mutableStateOf(false) }
+    var pinInput by remember { mutableStateOf("") }
+    var lockoutRemainingSec by remember { mutableIntStateOf(0) }
 
     val safFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -97,6 +102,20 @@ fun SettingsScreen(
         viewModel.refreshStorageInfo()
     }
 
+    LaunchedEffect(devModeState.showPinDialog, devModeState.lockoutUntilElapsedMs) {
+        if (!devModeState.showPinDialog) {
+            pinInput = ""
+            lockoutRemainingSec = 0
+            return@LaunchedEffect
+        }
+        while (true) {
+            val rem = devModeState.lockoutRemainingSeconds(SystemClock.elapsedRealtime())
+            lockoutRemainingSec = rem
+            if (rem <= 0) break
+            delay(500L)
+        }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -104,35 +123,6 @@ fun SettingsScreen(
     ) {
         item {
             Text(stringResource(R.string.nav_settings), style = MaterialTheme.typography.headlineMedium)
-        }
-
-        // Permissions Rationale Card
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Security, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.perm_title), style = MaterialTheme.typography.titleMedium)
-                    }
-                    Text(
-                        "• Microphone (RECORD_AUDIO): ${if (hasMicPermission) "Granted" else "Required"} — ${stringResource(R.string.perm_rationale_mic)}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "• Notifications (POST_NOTIFICATIONS): ${if (hasNotifPermission) "Granted" else "Recommended"} — ${stringResource(R.string.perm_rationale_notif)}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onRequestPermissions, modifier = Modifier.weight(1f).testTag("settings_grant_perms_btn")) {
-                            Text(stringResource(R.string.perm_grant))
-                        }
-                        OutlinedButton(onClick = onOpenAppSettings, modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.perm_open_settings))
-                        }
-                    }
-                }
-            }
         }
 
         // Save Location Card (App-Private Internal, Public Documents/FaintRec, External SD SAF)
@@ -436,81 +426,24 @@ fun SettingsScreen(
             }
         }
 
-        // External Microphone Devices & USB Permission
+        // App version footer (silent 7-tap access when DEV_PIN is configured at build time)
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.settings_audio_input), style = MaterialTheme.typography.titleSmall)
-                        OutlinedButton(onClick = {
-                            viewModel.refreshInputDevices()
-                            viewModel.requestUsbPermission()
-                        }) {
-                            Icon(Icons.Default.Usb, null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("USB Scan")
-                        }
+            Text(
+                text = stringResource(R.string.settings_version_format, BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        devModeController.onVersionTap()
                     }
-                    if (externalInputDevices.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.no_external_mic_detected),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("settings_no_external_mic_text")
-                        )
-                    }
-                    usbStatus?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                    }
-                    inputDevices.forEach { dev ->
-                        val isSel = dev.id == selectedDevice?.id
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isSel) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surface
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.selectInputDevice(dev) }
-                        ) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text(dev.name, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "Sample rates: ${dev.sampleRates.joinToString { "${it / 1000} kHz" }} | Channels: ${dev.channelCounts.joinToString()}",
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                                Text(
-                                    "Encodings: ${dev.encodings.joinToString()}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Background Recording, Tile, Widget & Hearing Safety Note
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.HealthAndSafety, null, tint = MaterialTheme.colorScheme.secondary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Hearing Safety & Background Capture", style = MaterialTheme.typography.titleSmall)
-                    }
-                    Text(
-                        "• Playback boost is capped at +24 dB with a soft limiter and warns above +12 dB to protect your hearing.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "• Home Screen Widget (Glance), Quick Settings Tile, and Long-Press App Icon Shortcut let you start/stop recording and add markers rapidly. On Android 14+, starting mic capture from a tile or widget opens FaintRec briefly to satisfy foreground microphone security rules.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-            }
+                    .padding(vertical = 16.dp)
+                    .testTag("settings_version_text")
+            )
         }
     }
 
@@ -534,6 +467,72 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showMoveAllDialog = false }) {
+                    Text(stringResource(R.string.converter_cancel))
+                }
+            }
+        )
+    }
+
+    if (devModeState.showPinDialog) {
+        val isLockedOut = lockoutRemainingSec > 0
+        AlertDialog(
+            onDismissRequest = {
+                pinInput = ""
+                devModeController.dismissPinDialog()
+            },
+            title = { Text(stringResource(R.string.dev_pin_dialog_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { pinInput = it },
+                        label = { Text(stringResource(R.string.dev_pin_label)) },
+                        singleLine = true,
+                        enabled = !isLockedOut,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        isError = devModeState.showIncorrectPinError || isLockedOut,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("dev_pin_input")
+                    )
+                    if (isLockedOut) {
+                        Text(
+                            text = stringResource(R.string.dev_pin_locked_countdown, lockoutRemainingSec),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("dev_pin_lockout_text")
+                        )
+                    } else if (devModeState.showIncorrectPinError) {
+                        Text(
+                            text = stringResource(R.string.dev_pin_incorrect),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("dev_pin_error_text")
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val submitted = pinInput
+                        pinInput = ""
+                        devModeController.submitPin(submitted)
+                    },
+                    enabled = !isLockedOut && pinInput.isNotEmpty(),
+                    modifier = Modifier.testTag("dev_pin_unlock_btn")
+                ) {
+                    Text(stringResource(R.string.dev_pin_unlock))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pinInput = ""
+                        devModeController.dismissPinDialog()
+                    }
+                ) {
                     Text(stringResource(R.string.converter_cancel))
                 }
             }

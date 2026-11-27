@@ -27,8 +27,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NotInterested
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -82,6 +85,7 @@ import com.example.data.AppFeature
 import com.example.data.AppLogEntity
 import com.example.data.FeatureHealthStatus
 import com.example.data.LogLevel
+import com.example.logging.RadioStreamCheckResult
 import com.example.ui.viewmodel.FeatureHealthUiRow
 import com.example.ui.viewmodel.LogQuickFilter
 import com.example.ui.viewmodel.LogViewModel
@@ -100,6 +104,8 @@ fun LogScreen(
     var dashboardExpanded by remember { mutableStateOf(true) }
     var selectedLogEntry by remember { mutableStateOf<AppLogEntity?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var editingStreamUrl by remember { mutableStateOf<String?>(null) }
+    var editingStreamDraft by remember { mutableStateOf("") }
 
     val timeFmt = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val fullDateFmt = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()) }
@@ -314,7 +320,16 @@ fun LogScreen(
                         timeFmt = timeFmt,
                         isTestingThis = state.testingFeatureId == row.feature.id,
                         anyTestRunning = state.isRunningAllTests || state.testingFeatureId != null,
-                        onRunTest = { viewModel.runSingleTest(row.feature) }
+                        onRunTest = { viewModel.runSingleTest(row.feature) },
+                        radioStreams = if (row.feature == AppFeature.SPIRIT_BOX_RADIO) state.radioStreams else emptyList(),
+                        testingStreamUrl = if (row.feature == AppFeature.SPIRIT_BOX_RADIO) state.testingStreamUrl else null,
+                        onRetestStream = { url -> viewModel.testSingleRadioStream(url) },
+                        onEditStream = { url ->
+                            editingStreamUrl = url
+                            editingStreamDraft = url
+                        },
+                        onRemoveStream = { url -> viewModel.removeRadioStream(url) },
+                        onRemoveUnreachableStreams = { viewModel.removeUnreachableStreams() }
                     )
                 }
             }
@@ -527,6 +542,43 @@ fun LogScreen(
             }
         )
     }
+
+    // Edit Radio Stream URL dialog
+    editingStreamUrl?.let { originalUrl ->
+        AlertDialog(
+            onDismissRequest = { editingStreamUrl = null },
+            title = { Text(stringResource(R.string.log_stream_edit_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editingStreamDraft,
+                        onValueChange = { editingStreamDraft = it },
+                        label = { Text(stringResource(R.string.log_stream_url_label)) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("log_edit_stream_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.editRadioStream(originalUrl, editingStreamDraft)
+                        editingStreamUrl = null
+                    },
+                    modifier = Modifier.testTag("log_edit_stream_save_btn")
+                ) {
+                    Text(stringResource(R.string.log_stream_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingStreamUrl = null }) {
+                    Text(stringResource(R.string.converter_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -555,7 +607,13 @@ private fun FeatureHealthRowCard(
     timeFmt: SimpleDateFormat,
     isTestingThis: Boolean,
     anyTestRunning: Boolean,
-    onRunTest: () -> Unit
+    onRunTest: () -> Unit,
+    radioStreams: List<RadioStreamCheckResult> = emptyList(),
+    testingStreamUrl: String? = null,
+    onRetestStream: (String) -> Unit = {},
+    onEditStream: (String) -> Unit = {},
+    onRemoveStream: (String) -> Unit = {},
+    onRemoveUnreachableStreams: () -> Unit = {}
 ) {
     val (badgeColor, badgeLabel, badgeIcon) = when (row.status) {
         FeatureHealthStatus.WORKING -> Triple(
@@ -594,82 +652,231 @@ private fun FeatureHealthRowCard(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Icon(
-                imageVector = badgeIcon,
-                contentDescription = badgeLabel,
-                tint = badgeColor,
-                modifier = Modifier.size(22.dp)
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Icon(
+                    imageVector = badgeIcon,
+                    contentDescription = badgeLabel,
+                    tint = badgeColor,
+                    modifier = Modifier.size(22.dp)
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(
-                        text = row.feature.displayName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = badgeColor.copy(alpha = 0.16f)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = badgeLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = badgeColor,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            text = row.feature.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = badgeColor.copy(alpha = 0.16f)
+                        ) {
+                            Text(
+                                text = badgeLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = badgeColor,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    val okText = row.lastSuccessMillis?.let { "Last OK: ${timeFmt.format(Date(it))}" }
+                        ?: "Last OK: —"
+                    Text(
+                        text = okText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (!row.lastErrorMessage.isNullOrBlank()) {
+                        Text(
+                            text = row.lastErrorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (row.status == FeatureHealthStatus.FAILED) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                val okText = row.lastSuccessMillis?.let { "Last OK: ${timeFmt.format(Date(it))}" }
-                    ?: "Last OK: —"
-                Text(
-                    text = okText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (!row.lastErrorMessage.isNullOrBlank()) {
-                    Text(
-                        text = row.lastErrorMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (row.status == FeatureHealthStatus.FAILED) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                FilledTonalButton(
+                    onClick = onRunTest,
+                    enabled = !anyTestRunning,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("test_button_${row.feature.id}")
+                ) {
+                    if (isTestingThis) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(stringResource(R.string.log_test_button))
+                    }
                 }
             }
-            FilledTonalButton(
-                onClick = onRunTest,
-                enabled = !anyTestRunning,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                modifier = Modifier.testTag("test_button_${row.feature.id}")
-            ) {
-                if (isTestingThis) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Text(stringResource(R.string.log_test_button))
+
+            // Per-URL radio stream diagnostics with Edit & Remove controls
+            if (row.feature == AppFeature.SPIRIT_BOX_RADIO) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .testTag("log_radio_streams_section"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (radioStreams.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.log_streams_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        val unreachableCount = radioStreams.count { it.isReachable == false }
+                        radioStreams.forEachIndexed { idx, stream ->
+                            val (sColor, sPrefix) = when (stream.isReachable) {
+                                true -> MaterialTheme.colorScheme.tertiary to stringResource(R.string.log_stream_reachable)
+                                false -> MaterialTheme.colorScheme.error to stringResource(R.string.log_stream_unreachable)
+                                null -> MaterialTheme.colorScheme.secondary to stringResource(R.string.log_status_not_tested)
+                            }
+                            val statusText = if (stream.isReachable == null) {
+                                sPrefix
+                            } else {
+                                "$sPrefix • ${stream.statusDetail}"
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (stream.isReachable == false) {
+                                        MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+                                    } else {
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                                    }
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("log_radio_stream_row_$idx")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 10.dp, top = 6.dp, bottom = 6.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(
+                                            text = stream.url,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = sColor.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = statusText,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = sColor,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { onRetestStream(stream.url) },
+                                        enabled = !anyTestRunning && testingStreamUrl == null,
+                                        modifier = Modifier.testTag("log_stream_retest_$idx")
+                                    ) {
+                                        if (testingStreamUrl == stream.url) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Default.Refresh,
+                                                contentDescription = stringResource(R.string.log_stream_retest_cd),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { onEditStream(stream.url) },
+                                        modifier = Modifier.testTag("log_stream_edit_$idx")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = stringResource(R.string.log_stream_edit_cd),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { onRemoveStream(stream.url) },
+                                        modifier = Modifier.testTag("log_stream_remove_$idx")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = stringResource(R.string.log_stream_remove_cd),
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (unreachableCount > 0) {
+                            OutlinedButton(
+                                onClick = onRemoveUnreachableStreams,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("log_remove_unreachable_streams_btn")
+                            ) {
+                                Icon(
+                                    Icons.Default.DeleteSweep,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.log_remove_unreachable_streams, unreachableCount),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

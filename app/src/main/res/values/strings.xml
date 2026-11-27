@@ -8,7 +8,6 @@
     <string name="nav_library">Library</string>
     <string name="nav_analyze">Analyze</string>
     <string name="nav_spirit_box">Spirit Box</string>
-    <string name="nav_log">Log</string>
     <string name="nav_settings">Settings</string>
 
     <!-- Recording -->
@@ -25,18 +24,14 @@
     <string name="var_hang_time">Hang Time</string>
     <string name="var_preroll">2s Pre-Roll Active</string>
     <string name="var_waiting">Listening for threshold…</string>
-    <string name="unprocessed_unsupported_warn">This device does not support UNPROCESSED audio source. Falling back to %1$s — system DSP may attenuate faint sounds.</string>
     <string name="bluetooth_mic_warn">Bluetooth microphones use low-bandwidth codecs (8–16 kHz). Use a wired or USB-C microphone for faint sounds.</string>
     <string name="mic_changed_marker">Mic changed</string>
     <string name="mic_disconnected_notice">External mic disconnected — safely switched to built-in mic.</string>
-    <string name="no_external_mic_detected">No external mic detected</string>
+    <string name="external_mic_picker_title">External Microphone</string>
 
     <!-- Permissions -->
-    <string name="perm_title">Audio &amp; Background Permissions</string>
     <string name="perm_rationale_mic">FaintRec needs microphone access to capture raw, unprocessed acoustic audio at 48 kHz+.</string>
-    <string name="perm_rationale_notif">Notification access keeps background recording alive when the screen is off and provides quick Stop, Pause, and Marker controls.</string>
     <string name="perm_grant">Grant Permissions</string>
-    <string name="perm_open_settings">Open App Settings</string>
 
     <!-- Library & Playback -->
     <string name="library_empty_title">No Recordings Yet</string>
@@ -108,8 +103,7 @@
 
     <!-- Spirit Box -->
     <string name="spirit_box_title">Spirit Box</string>
-    <string name="spirit_box_disclaimer">For entertainment. Results are random radio/audio fragments.</string>
-    <string name="spirit_box_headphone_tip">Headphones recommended to prevent speaker-to-mic feedback and protect hearing.</string>
+    <string name="spirit_box_fun_line">Fun 😊 and Enjoy!</string>
     <string name="spirit_box_start">Start Sweep</string>
     <string name="spirit_box_stop">Stop Sweep</string>
     <string name="spirit_box_hold">Hold</string>
@@ -146,9 +140,16 @@
     <!-- Settings -->
     <string name="settings_theme">App Theme</string>
     <string name="settings_language">Language</string>
-    <string name="settings_audio_input">Audio Input Device</string>
     <string name="settings_channels">Recording Channels</string>
     <string name="settings_encoding">PCM Bit Depth</string>
+    <string name="settings_version_format">Version %1$s</string>
+    <string name="dev_pin_dialog_title">Enter PIN</string>
+    <string name="dev_pin_label">PIN</string>
+    <string name="dev_pin_incorrect">Incorrect PIN</string>
+    <string name="dev_pin_locked_countdown">Too many attempts. Try again in %1$ds</string>
+    <string name="dev_pin_unlock">Unlock</string>
+    <string name="dev_log_back_cd">Back to Settings</string>
+    <string name="dev_log_lock_cd">Lock</string>
     <!-- Log Tab: Feature Health & Event Log -->
     <string name="log_title">Feature Health &amp; Event Log</string>
     <string name="log_report_label">Report</string>
@@ -172,6 +173,16 @@
     <string name="log_action_clear">Clear</string>
     <string name="log_clear_confirm_title">Clear Event Log?</string>
     <string name="log_clear_confirm_body">This will permanently remove all stored log entries. Feature health badges remain intact.</string>
+    <string name="log_stream_reachable">Reachable</string>
+    <string name="log_stream_unreachable">Unreachable</string>
+    <string name="log_streams_empty">No radio stream URLs configured.</string>
+    <string name="log_stream_edit_title">Edit Radio Stream URL</string>
+    <string name="log_stream_url_label">Stream URL (https://…)</string>
+    <string name="log_stream_save">Save &amp; Test</string>
+    <string name="log_stream_retest_cd">Test this stream</string>
+    <string name="log_stream_edit_cd">Edit stream URL</string>
+    <string name="log_stream_remove_cd">Remove stream</string>
+    <string name="log_remove_unreachable_streams">Remove Unreachable (%1$d)</string>
 
     <!-- Save Location & Storage Management -->
     <string name="notif_channel_storage_alerts">Storage Alerts</string>
@@ -201,5 +212,4 @@
     <string name="storage_badge_private">Private</string>
     <string name="storage_badge_public">Public</string>
     <string name="storage_badge_sd">SD Card</string>
-    <string name="storage_quick_change">Change</string>
 </resources>
