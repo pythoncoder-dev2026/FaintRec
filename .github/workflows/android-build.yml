@@ -38,23 +38,54 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+      - name: Detect project folder
+        id: proj
+        run: |
+          SETTINGS="$(find . -maxdepth 3 \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -n 1)"
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::settings.gradle(.kts) not found. Project files are missing in the repo."
+            ls -la
+            exit 1
+          fi
+          DIR="$(dirname "$SETTINGS")"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          if [ -f "$DIR/gradlew" ]; then
+            echo "wrapper=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "wrapper=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Project folder: $DIR"
+          ls -la "$DIR"
 
       - name: Build info
         run: |
           echo "App: $APP_NAME"
           echo "Package: $PACKAGE_NAME"
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
+          echo "Project dir: ${{ steps.proj.outputs.dir }}"
+          echo "Using gradlew: ${{ steps.proj.outputs.wrapper }}"
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug -PversionName=$VERSION_NAME -PversionCode=$VERSION_CODE --stacktrace
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          if [ "${{ steps.proj.outputs.wrapper }}" = "true" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug -PversionName=$VERSION_NAME -PversionCode=$VERSION_CODE --stacktrace
+          else
+            gradle assembleDebug -PversionName=$VERSION_NAME -PversionCode=$VERSION_CODE --stacktrace
+          fi
 
       - name: Rename APK
         run: |
           mkdir -p dist
           APK="$(find . -path '*outputs/apk/debug/*.apk' | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "::error::Debug APK not found"
+            exit 1
+          fi
           cp "$APK" "dist/${APP_NAME}-${VERSION_NAME}-debug.apk"
 
       - name: Upload debug APK
@@ -63,3 +94,12 @@ jobs:
           name: ${{ env.APP_NAME }}-${{ env.VERSION_NAME }}-debug
           path: dist/*.apk
           if-no-files-found: error
+
+      - name: Upload build reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            **/build/reports/**
+          if-no-files-found: ignore
