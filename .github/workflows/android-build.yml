@@ -18,6 +18,7 @@ env:
   PACKAGE_NAME: com.faintrec.app
   VERSION_NAME: "1.0.0"
   VERSION_CODE: ${{ github.run_number }}
+  DEFAULT_GRADLE_VERSION: "9.3.1"
 
 jobs:
   build:
@@ -36,12 +37,7 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.9
-
-      - name: Detect project folder
+      - name: Detect project folder and Gradle version
         id: proj
         run: |
           SETTINGS="$(find . -maxdepth 3 \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -n 1)"
@@ -52,13 +48,31 @@ jobs:
           fi
           DIR="$(dirname "$SETTINGS")"
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
           if [ -f "$DIR/gradlew" ]; then
             echo "wrapper=true" >> "$GITHUB_OUTPUT"
           else
             echo "wrapper=false" >> "$GITHUB_OUTPUT"
           fi
+
+          PROPS="$DIR/gradle/wrapper/gradle-wrapper.properties"
+          GV=""
+          if [ -f "$PROPS" ]; then
+            GV="$(grep -oP 'gradle-\K[0-9.]+(?=-(bin|all))' "$PROPS" | head -n 1 || true)"
+          fi
+          if [ -z "$GV" ]; then
+            GV="$DEFAULT_GRADLE_VERSION"
+          fi
+          echo "gradle=$GV" >> "$GITHUB_OUTPUT"
+
           echo "Project folder: $DIR"
+          echo "Gradle version: $GV"
           ls -la "$DIR"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ steps.proj.outputs.gradle }}
 
       - name: Build info
         run: |
@@ -66,6 +80,7 @@ jobs:
           echo "Package: $PACKAGE_NAME"
           echo "Version: $VERSION_NAME ($VERSION_CODE)"
           echo "Project dir: ${{ steps.proj.outputs.dir }}"
+          echo "Gradle: ${{ steps.proj.outputs.gradle }}"
           echo "Using gradlew: ${{ steps.proj.outputs.wrapper }}"
 
       - name: Build debug APK
