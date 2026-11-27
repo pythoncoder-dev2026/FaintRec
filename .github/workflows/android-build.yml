@@ -74,6 +74,23 @@ jobs:
         with:
           gradle-version: ${{ steps.proj.outputs.gradle }}
 
+      - name: Create debug keystore
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          if [ -d app ] && [ ! -f app/debug.keystore ]; then
+            cp debug.keystore app/debug.keystore
+          fi
+          ls -la debug.keystore
+
       - name: Build info
         run: |
           echo "App: $APP_NAME"
