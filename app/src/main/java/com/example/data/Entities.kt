@@ -270,6 +270,7 @@ enum class LogLevel {
 @Serializable
 enum class FeatureHealthStatus {
     WORKING,
+    FALLBACK,
     FAILED,
     NOT_SUPPORTED,
     NOT_TESTED
@@ -301,7 +302,8 @@ enum class AppFeature(val id: String, val displayName: String) {
     SPIRIT_BOX_RADIO("spirit_box_radio", "Spirit Box: Radio Streams"),
     SPIRIT_BOX_LOCAL("spirit_box_local", "Spirit Box: Local Audio"),
     SPIRIT_BOX_STATIC("spirit_box_static", "Spirit Box: Static"),
-    SPIRIT_BOX_TTS("spirit_box_tts", "Spirit Box: Offline TTS");
+    SPIRIT_BOX_TTS("spirit_box_tts", "Spirit Box: Offline TTS"),
+    SPIRIT_BOX_RECORDER("spirit_box_recorder", "Spirit Box: Recorder");
 
     companion object {
         fun fromId(id: String): AppFeature? = entries.firstOrNull { it.id == id }

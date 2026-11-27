@@ -56,6 +56,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -213,6 +214,39 @@ fun SpiritBoxScreen(
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (cfg.recorderEnabled) {
+                                    MaterialTheme.colorScheme.error.copy(alpha = 0.16f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHighest
+                                },
+                                modifier = Modifier.testTag("spirit_box_rec_badge")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (cfg.recorderEnabled) MaterialTheme.colorScheme.error
+                                                else MaterialTheme.colorScheme.outline
+                                            )
+                                    )
+                                    Text(
+                                        text = if (cfg.recorderEnabled) "REC" else "REC OFF",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (cfg.recorderEnabled) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
                             Text(
                                 text = "HOPS: ${live.hopCount}",
                                 style = MaterialTheme.typography.titleSmall,
@@ -224,6 +258,82 @@ fun SpiritBoxScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+
+                    // Clearly visible Recorder ON/OFF bar (live-toggleable before or during sweep)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (cfg.recorderEnabled) {
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (cfg.recorderEnabled) MaterialTheme.colorScheme.error.copy(alpha = 0.55f)
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (cfg.recorderEnabled) MaterialTheme.colorScheme.error
+                                                else MaterialTheme.colorScheme.outline
+                                            )
+                                    )
+                                    Column {
+                                        Text(
+                                            text = if (cfg.recorderEnabled) {
+                                                "${stringResource(R.string.spirit_box_recorder_title)} • REC"
+                                            } else {
+                                                "${stringResource(R.string.spirit_box_recorder_title)} • OFF"
+                                            },
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (cfg.recorderEnabled) MaterialTheme.colorScheme.error
+                                            else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = if (cfg.recorderEnabled) {
+                                                stringResource(R.string.spirit_box_recorder_desc)
+                                            } else {
+                                                stringResource(R.string.spirit_box_recording_off_notice)
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.testTag("spirit_box_recorder_status_text")
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = cfg.recorderEnabled,
+                                    onCheckedChange = { enabled ->
+                                        if (enabled && cfg.recordMicTrack && !hasMicPermission) {
+                                            onRequestMicPermission()
+                                        }
+                                        viewModel.setRecorderEnabled(enabled)
+                                    },
+                                    modifier = Modifier.testTag("spirit_box_recorder_switch")
+                                )
+                            }
                         }
                     }
 
@@ -317,7 +427,7 @@ fun SpiritBoxScreen(
                                 if (live.isRunning) {
                                     viewModel.stopSpiritBox()
                                 } else {
-                                    if (cfg.recordMicTrack && !hasMicPermission) {
+                                    if (cfg.recorderEnabled && cfg.recordMicTrack && !hasMicPermission) {
                                         onRequestMicPermission()
                                     } else {
                                         viewModel.startSpiritBox()
@@ -590,22 +700,30 @@ fun SpiritBoxScreen(
                     )
 
                     SourceToggleRow(
-                        title = stringResource(R.string.spirit_box_record_session),
-                        subtitle = "Saves mix WAV in Documents/FaintRec/SpiritBox & Library",
+                        title = stringResource(R.string.spirit_box_record_sweep),
+                        subtitle = if (cfg.recorderEnabled) {
+                            "Saves sweep mix WAV to your chosen Save Location & Library"
+                        } else {
+                            stringResource(R.string.spirit_box_recording_off_notice)
+                        },
                         checked = cfg.recordSessionMix,
-                        onCheckedChange = { v -> viewModel.updateConfig { it.copy(recordSessionMix = v) } }
+                        enabled = cfg.recorderEnabled,
+                        onCheckedChange = { v -> viewModel.setRecordSweepOutput(v) },
+                        switchTestTag = "spirit_box_record_sweep_switch"
                     )
 
                     SourceToggleRow(
-                        title = stringResource(R.string.spirit_box_record_mic),
-                        subtitle = "Requests mic permission only when enabled",
+                        title = stringResource(R.string.spirit_box_record_mic_track),
+                        subtitle = "Requests microphone permission only when Recorder & this option are ON",
                         checked = cfg.recordMicTrack,
+                        enabled = cfg.recorderEnabled,
                         onCheckedChange = { v ->
-                            if (v && !hasMicPermission) {
+                            if (v && cfg.recorderEnabled && !hasMicPermission) {
                                 onRequestMicPermission()
                             }
-                            viewModel.updateConfig { it.copy(recordMicTrack = v) }
-                        }
+                            viewModel.setRecordMicTrack(v)
+                        },
+                        switchTestTag = "spirit_box_record_mic_switch"
                     )
                 }
             }
@@ -833,7 +951,9 @@ private fun SourceToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    switchTestTag: String? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -841,10 +961,24 @@ private fun SourceToggleRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.6f)
+            )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            modifier = if (switchTestTag != null) Modifier.testTag(switchTestTag) else Modifier
+        )
     }
 }
 

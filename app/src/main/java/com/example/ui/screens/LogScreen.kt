@@ -179,10 +179,14 @@ fun LogScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     StatusCountDot(MaterialTheme.colorScheme.tertiary, "${state.workingCount} OK")
+                                    if (state.fallbackCount > 0) {
+                                        StatusCountDot(MaterialTheme.colorScheme.secondary, "${state.fallbackCount} Fallback")
+                                    }
                                     StatusCountDot(MaterialTheme.colorScheme.error, "${state.failedCount} Fail")
                                     StatusCountDot(MaterialTheme.colorScheme.outline, "${state.notSupportedCount} N/A")
                                     StatusCountDot(MaterialTheme.colorScheme.secondary, "${state.notTestedCount} Untested")
@@ -558,6 +562,12 @@ private fun FeatureHealthRowCard(
             MaterialTheme.colorScheme.tertiary,
             stringResource(R.string.log_status_working),
             Icons.Default.CheckCircle
+        )
+        FeatureHealthStatus.FALLBACK -> Triple(
+            MaterialTheme.colorScheme.secondary,
+            row.lastErrorMessage?.takeIf { it.startsWith("Fallback") }
+                ?: stringResource(R.string.log_status_fallback),
+            Icons.Default.Warning
         )
         FeatureHealthStatus.FAILED -> Triple(
             MaterialTheme.colorScheme.error,

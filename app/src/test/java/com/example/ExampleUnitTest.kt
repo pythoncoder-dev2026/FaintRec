@@ -1,7 +1,9 @@
 package com.example
 
+import android.media.AudioDeviceInfo
 import com.example.analysis.FftProcessor
 import com.example.analysis.FftWindowType
+import com.example.audio.AudioDeviceManager
 import com.example.audio.PreRollBuffer
 import com.example.audio.WavCuePoint
 import com.example.audio.WavFileHelper
@@ -18,7 +20,9 @@ import com.example.spiritbox.SpiritBandMode
 import com.example.spiritbox.SpiritBoxDialMath
 import com.example.spiritbox.SweepDirection
 import com.example.util.AudioMath
+import com.example.util.MarkerDebouncer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -291,5 +295,71 @@ class ExampleUnitTest {
         } finally {
             tmp.delete()
         }
+    }
+
+    @Test
+    fun markerDebouncerEnforces500msWindow() {
+        val debouncer = MarkerDebouncer(500L)
+        assertTrue(debouncer.tryAcquire(1000L))
+        assertFalse(debouncer.tryAcquire(1000L))
+        assertFalse(debouncer.tryAcquire(1250L))
+        assertFalse(debouncer.tryAcquire(1499L))
+        assertTrue(debouncer.tryAcquire(1500L))
+        assertFalse(debouncer.tryAcquire(1999L))
+        assertTrue(debouncer.tryAcquire(2000L))
+        debouncer.reset()
+        assertTrue(debouncer.tryAcquire(2050L))
+    }
+
+    @Test
+    fun externalMicAllowlistFiltersNonExternalTypes() {
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_WIRED_HEADSET, 34))
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_WIRED_HEADPHONES, 34))
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_USB_DEVICE, 34))
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_USB_HEADSET, 34))
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_USB_ACCESSORY, 34))
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 34))
+        assertTrue(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_BLE_HEADSET, 31))
+        assertFalse(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_BLE_HEADSET, 30))
+
+        // Must exclude built-in, telephony, FM tuner, remote submix, bus, etc.
+        assertFalse(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_BUILTIN_MIC, 34))
+        assertFalse(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_TELEPHONY, 34))
+        assertFalse(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_FM_TUNER, 34))
+        assertFalse(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_REMOTE_SUBMIX, 34))
+        assertFalse(AudioDeviceManager.isAllowedExternalMicType(AudioDeviceInfo.TYPE_BUS, 34))
+    }
+
+    @Test
+    fun spiritBoxStaticLinearRmsIsValidAndFinite() {
+        val frames = 4096
+        val buf = FloatArray(frames)
+        val synth = NoiseAddSynthesizer(48000, 1)
+        synth.mixIntoChunk(
+            buffer = buf,
+            frames = frames,
+            chunkStartFrame = 0L,
+            totalTimelineFrames = frames.toLong(),
+            params = NoiseAddParams(
+                enabled = true,
+                noiseType = NoiseType.STATIC,
+                volumeDb = -24f,
+                fadeInMs = 0L,
+                fadeOutMs = 0L
+            ),
+            selectionStartFrame = 0L,
+            selectionEndFrame = frames.toLong(),
+            learnedProfile = null
+        )
+        assertTrue(buf.all { it.isFinite() })
+        var sumSq = 0.0
+        for (s in buf) sumSq += s.toDouble() * s.toDouble()
+        val linearRms = kotlin.math.sqrt(sumSq / frames)
+        assertTrue("Expected linear RMS in 0.0005..0.99, got $linearRms", linearRms in 0.0005..0.99)
+    }
+
+    @Test
+    fun spiritBoxRecorderFeatureIsRegistered() {
+        assertEquals(AppFeature.SPIRIT_BOX_RECORDER, AppFeature.fromId("spirit_box_recorder"))
     }
 }

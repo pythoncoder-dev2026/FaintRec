@@ -38,6 +38,7 @@ class SpiritBoxForegroundService : Service() {
         const val ACTION_START = "com.example.service.SPIRIT_BOX_START"
         const val ACTION_STOP = "com.example.service.SPIRIT_BOX_STOP"
         const val ACTION_TOGGLE_HOLD = "com.example.service.SPIRIT_BOX_HOLD"
+        const val ACTION_TOGGLE_RECORDER = "com.example.service.SPIRIT_BOX_TOGGLE_RECORDER"
         const val ACTION_MARK = "com.example.service.SPIRIT_BOX_MARK"
         const val EXTRA_WITH_MIC = "extra_with_mic"
 
@@ -52,6 +53,9 @@ class SpiritBoxForegroundService : Service() {
 
         fun toggleHoldIntent(context: Context): Intent =
             Intent(context, SpiritBoxForegroundService::class.java).apply { action = ACTION_TOGGLE_HOLD }
+
+        fun toggleRecorderIntent(context: Context): Intent =
+            Intent(context, SpiritBoxForegroundService::class.java).apply { action = ACTION_TOGGLE_RECORDER }
 
         fun markIntent(context: Context): Intent =
             Intent(context, SpiritBoxForegroundService::class.java).apply { action = ACTION_MARK }
@@ -72,6 +76,10 @@ class SpiritBoxForegroundService : Service() {
                 startSpiritBoxForeground(withMic)
             }
             ACTION_TOGGLE_HOLD -> engine.toggleHold()
+            ACTION_TOGGLE_RECORDER -> {
+                engine.setRecorderEnabled(!engine.config.recorderEnabled)
+                pushCurrentNotification()
+            }
             ACTION_MARK -> engine.addMarker("Notification Marker", "Added from notification")
             ACTION_STOP -> stopSpiritBoxForeground()
         }
@@ -81,9 +89,18 @@ class SpiritBoxForegroundService : Service() {
     private fun startSpiritBoxForeground(withMicRequested: Boolean) {
         val hasMicPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-        val useMicFgsType = withMicRequested && hasMicPerm
+        // Never request microphone FGS type unless Recorder AND Mic Track are both ON and permitted
+        val useMicFgsType = withMicRequested &&
+            engine.config.recorderEnabled &&
+            engine.config.recordMicTrack &&
+            hasMicPerm
 
-        val notif = buildNotification(isHeld = false, elapsedMs = 0L, hops = 0, freqLabel = "Sweeping")
+        val notif = buildNotification(
+            isRecorderEnabled = engine.config.recorderEnabled,
+            elapsedMs = 0L,
+            hops = 0,
+            freqLabel = "Sweeping"
+        )
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val fgsType = if (useMicFgsType && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -103,7 +120,7 @@ class SpiritBoxForegroundService : Service() {
             return
         }
 
-        val started = engine.startSession(engine.config.copy(recordMicTrack = useMicFgsType))
+        val started = engine.startSession(engine.config)
         if (!started) {
             stopSpiritBoxForeground()
             return
@@ -111,6 +128,7 @@ class SpiritBoxForegroundService : Service() {
 
         stateJob?.cancel()
         var lastUpdateMs = 0L
+        var lastRecEnabled = engine.config.recorderEnabled
         stateJob = serviceScope.launch {
             engine.liveState.collect { st ->
                 if (!st.isRunning) {
@@ -118,17 +136,41 @@ class SpiritBoxForegroundService : Service() {
                     return@collect
                 }
                 val now = System.currentTimeMillis()
-                if (now - lastUpdateMs >= 950L) {
+                val recChanged = st.isRecorderEnabled != lastRecEnabled
+                if (recChanged || now - lastUpdateMs >= 950L) {
                     lastUpdateMs = now
+                    lastRecEnabled = st.isRecorderEnabled
                     try {
                         NotificationManagerCompat.from(this@SpiritBoxForegroundService).notify(
                             NOTIF_ID,
-                            buildNotification(st.isHeld, st.elapsedMs, st.hopCount, st.currentFrequencyLabel)
+                            buildNotification(
+                                isRecorderEnabled = st.isRecorderEnabled,
+                                elapsedMs = st.elapsedMs,
+                                hops = st.hopCount,
+                                freqLabel = st.currentFrequencyLabel
+                            )
                         )
                     } catch (_: SecurityException) {
                     }
                 }
             }
+        }
+    }
+
+    private fun pushCurrentNotification() {
+        val st = engine.liveState.value
+        if (!st.isRunning) return
+        try {
+            NotificationManagerCompat.from(this).notify(
+                NOTIF_ID,
+                buildNotification(
+                    isRecorderEnabled = engine.config.recorderEnabled,
+                    elapsedMs = st.elapsedMs,
+                    hops = st.hopCount,
+                    freqLabel = st.currentFrequencyLabel
+                )
+            )
+        } catch (_: SecurityException) {
         }
     }
 
@@ -141,7 +183,7 @@ class SpiritBoxForegroundService : Service() {
     }
 
     private fun buildNotification(
-        isHeld: Boolean,
+        isRecorderEnabled: Boolean,
         elapsedMs: Long,
         hops: Int,
         freqLabel: String
@@ -153,8 +195,8 @@ class SpiritBoxForegroundService : Service() {
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val holdPi = PendingIntent.getService(
-            this, 402, toggleHoldIntent(this),
+        val recTogglePi = PendingIntent.getService(
+            this, 405, toggleRecorderIntent(this),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val markPi = PendingIntent.getService(
@@ -166,7 +208,12 @@ class SpiritBoxForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val content = "${AudioMath.formatDurationShort(elapsedMs)} • $freqLabel • $hops hops"
+        val recStateText = if (isRecorderEnabled) {
+            getString(R.string.spirit_box_rec_on_action)
+        } else {
+            getString(R.string.spirit_box_rec_off_action)
+        }
+        val content = "$recStateText • ${AudioMath.formatDurationShort(elapsedMs)} • $freqLabel • $hops hops"
         return NotificationCompat.Builder(this, FaintRecApp.CHANNEL_SPIRIT_BOX)
             .setSmallIcon(R.drawable.ic_stat_faintrec)
             .setContentTitle(getString(R.string.notif_spirit_box_title))
@@ -174,7 +221,7 @@ class SpiritBoxForegroundService : Service() {
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(openPi)
-            .addAction(0, if (isHeld) getString(R.string.spirit_box_resume) else getString(R.string.spirit_box_hold), holdPi)
+            .addAction(0, recStateText, recTogglePi)
             .addAction(0, getString(R.string.spirit_box_mark), markPi)
             .addAction(0, getString(R.string.spirit_box_stop), stopPi)
             .build()

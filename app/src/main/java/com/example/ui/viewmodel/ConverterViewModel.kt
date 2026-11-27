@@ -11,9 +11,11 @@ import com.example.converter.AudioConverterEngine
 import com.example.converter.ConversionConfig
 import com.example.converter.ConversionResultSummary
 import com.example.converter.FormatSupportStatus
+import com.example.converter.LameNativeBridge
 import com.example.converter.OutputAudioFormat
 import com.example.data.FaintRecRepository
 import com.example.data.RecordingEntity
+import com.example.data.SettingsDataStore
 import com.example.service.ConversionForegroundService
 import com.example.util.StorageHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,6 +31,7 @@ import javax.inject.Inject
 data class ConverterUiState(
     val sourceRecordings: List<RecordingEntity> = emptyList(),
     val codecSupport: List<FormatSupportStatus> = emptyList(),
+    val showMp3UnavailableNote: Boolean = false,
     val config: ConversionConfig = ConversionConfig(),
     val isConverting: Boolean = false,
     val currentFileIndex: Int = 0,
@@ -45,7 +48,8 @@ data class ConverterUiState(
 class ConverterViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: FaintRecRepository,
-    private val converterEngine: AudioConverterEngine
+    private val converterEngine: AudioConverterEngine,
+    private val settingsDataStore: SettingsDataStore
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ConverterUiState())
@@ -62,14 +66,30 @@ class ConverterViewModel @Inject constructor(
     }
 
     init {
-        val support = converterEngine.checkCodecSupport()
-        val firstSupported = support.firstOrNull { it.isSupported && it.format == OutputAudioFormat.AAC_M4A }?.format
-            ?: support.firstOrNull { it.isSupported }?.format
+        val allSupport = converterEngine.checkCodecSupport()
+        val mp3Available = LameNativeBridge.isAvailable
+        // Hide MP3 in converter list when LAME sources are not compiled into this build
+        val visibleSupport = if (mp3Available) {
+            allSupport
+        } else {
+            allSupport.filterNot { it.format == OutputAudioFormat.MP3 }
+        }
+        val firstSupported = visibleSupport.firstOrNull { it.isSupported && it.format == OutputAudioFormat.AAC_M4A }?.format
+            ?: visibleSupport.firstOrNull { it.isSupported }?.format
             ?: OutputAudioFormat.WAV
         _state.value = _state.value.copy(
-            codecSupport = support,
+            codecSupport = visibleSupport,
             config = ConversionConfig(outputFormat = firstSupported)
         )
+        if (!mp3Available) {
+            viewModelScope.launch {
+                settingsDataStore.settingsFlow.collect { s ->
+                    _state.value = _state.value.copy(
+                        showMp3UnavailableNote = !s.mp3UnavailableNoticeDismissed
+                    )
+                }
+            }
+        }
         try {
             val filter = IntentFilter(ConversionForegroundService.ACTION_CANCEL_BROADCAST)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -79,6 +99,13 @@ class ConverterViewModel @Inject constructor(
                 context.registerReceiver(cancelReceiver, filter)
             }
         } catch (_: Exception) {
+        }
+    }
+
+    fun dismissMp3UnavailableNote() {
+        _state.value = _state.value.copy(showMp3UnavailableNote = false)
+        viewModelScope.launch {
+            settingsDataStore.setMp3UnavailableNoticeDismissed(true)
         }
     }
 

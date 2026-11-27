@@ -44,6 +44,7 @@ enum class LogQuickFilter {
 data class LogScreenState(
     val summaryLine: String = "0 working, 0 failed, 0 not supported",
     val workingCount: Int = 0,
+    val fallbackCount: Int = 0,
     val failedCount: Int = 0,
     val notSupportedCount: Int = 0,
     val notTestedCount: Int = AppFeature.entries.size,
@@ -129,6 +130,7 @@ class LogViewModel @Inject constructor(
             )
         }
         val working = rows.count { it.status == FeatureHealthStatus.WORKING }
+        val fallback = rows.count { it.status == FeatureHealthStatus.FALLBACK }
         val failed = rows.count { it.status == FeatureHealthStatus.FAILED }
         val notSupported = rows.count { it.status == FeatureHealthStatus.NOT_SUPPORTED }
         val notTested = rows.count { it.status == FeatureHealthStatus.NOT_TESTED }
@@ -151,8 +153,9 @@ class LogViewModel @Inject constructor(
         val featureTags = logEntities.map { it.featureTag }.distinct().sorted()
 
         LogScreenState(
-            summaryLine = "$working working, $failed failed, $notSupported not supported",
+            summaryLine = appLogger.buildSummaryLine(healthEntities),
             workingCount = working,
+            fallbackCount = fallback,
             failedCount = failed,
             notSupportedCount = notSupported,
             notTestedCount = notTested,

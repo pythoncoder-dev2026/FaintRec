@@ -50,7 +50,12 @@ class SpiritBoxViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             settingsDataStore.settingsFlow.collect { s ->
-                val updated = _config.value.copy(streamUrls = s.spiritBoxStreamUrls)
+                val updated = _config.value.copy(
+                    streamUrls = s.spiritBoxStreamUrls,
+                    recorderEnabled = s.spiritBoxRecorderEnabled,
+                    recordSessionMix = s.spiritBoxRecordSweepOutput,
+                    recordMicTrack = s.spiritBoxRecordMicTrack
+                )
                 _config.value = updated
                 engine.updateConfig(updated)
             }
@@ -64,6 +69,21 @@ class SpiritBoxViewModel @Inject constructor(
         val next = transform(_config.value)
         _config.value = next
         engine.updateConfig(next)
+    }
+
+    fun setRecorderEnabled(enabled: Boolean) {
+        _config.value = _config.value.copy(recorderEnabled = enabled)
+        engine.setRecorderEnabled(enabled)
+    }
+
+    fun setRecordSweepOutput(enabled: Boolean) {
+        _config.value = _config.value.copy(recordSessionMix = enabled)
+        engine.setRecordSweepOutput(enabled)
+    }
+
+    fun setRecordMicTrack(enabled: Boolean) {
+        _config.value = _config.value.copy(recordMicTrack = enabled)
+        engine.setRecordMicTrack(enabled)
     }
 
     fun addStreamUrl(rawUrl: String) {
@@ -93,7 +113,8 @@ class SpiritBoxViewModel @Inject constructor(
     fun startSpiritBox() {
         val cfg = _config.value
         engine.updateConfig(cfg)
-        val intent = SpiritBoxForegroundService.startIntent(context, withMic = cfg.recordMicTrack)
+        val withMic = cfg.recorderEnabled && cfg.recordMicTrack
+        val intent = SpiritBoxForegroundService.startIntent(context, withMic = withMic)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

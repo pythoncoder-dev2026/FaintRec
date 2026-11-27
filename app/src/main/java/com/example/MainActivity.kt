@@ -142,11 +142,15 @@ class MainActivity : ComponentActivity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
             if (spiritBoxEngine.liveState.value.isRunning) {
-                spiritBoxEngine.addMarker("Volume key marker")
+                if ((event?.repeatCount ?: 0) == 0) {
+                    spiritBoxEngine.addMarker("Volume key marker")
+                }
                 return true
             }
             if (viewModel.telemetry.value.isRecording) {
-                viewModel.addLiveRecordingMarker("Volume key marker")
+                if ((event?.repeatCount ?: 0) == 0) {
+                    viewModel.addLiveRecordingMarker("Volume key marker")
+                }
                 return true
             }
         }

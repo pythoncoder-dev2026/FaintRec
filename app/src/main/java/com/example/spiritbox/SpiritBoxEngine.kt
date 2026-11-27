@@ -24,6 +24,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.example.analysis.FftProcessor
 import com.example.analysis.FftResult
 import com.example.analysis.FftWindowType
+import com.example.audio.AudioDeviceManager
 import com.example.audio.WavCuePoint
 import com.example.audio.WavFileHelper
 import com.example.data.AppFeature
@@ -32,14 +33,17 @@ import com.example.data.MarkerEntity
 import com.example.data.MarkerExportItem
 import com.example.data.RecordingEntity
 import com.example.data.RecordingSourceTag
+import com.example.data.RecordingStorageType
+import com.example.data.SettingsDataStore
 import com.example.data.SpiritBoxHopLogItem
 import com.example.data.SpiritBoxQuestionLogItem
 import com.example.data.SpiritBoxSessionEntity
 import com.example.editor.BiquadFilter
 import com.example.logging.AppLogger
+import com.example.storage.DirectWavTarget
+import com.example.storage.StorageLocationManager
 import com.example.util.AudioMath
-import com.example.util.FaintRecFolder
-import com.example.util.StorageHelper
+import com.example.util.MarkerDebouncer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +84,9 @@ import kotlin.random.Random
 class SpiritBoxEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: FaintRecRepository,
+    private val storageLocationManager: StorageLocationManager,
+    private val settingsDataStore: SettingsDataStore,
+    private val deviceManager: AudioDeviceManager,
     private val logger: AppLogger
 ) {
     companion object {
@@ -100,6 +107,7 @@ class SpiritBoxEngine @Inject constructor(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val json = Json { ignoreUnknownKeys = true }
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val markerDebouncer = MarkerDebouncer(500L)
 
     private val _liveState = MutableStateFlow(SpiritBoxLiveState())
     val liveState: StateFlow<SpiritBoxLiveState> = _liveState.asStateFlow()
@@ -111,10 +119,13 @@ class SpiritBoxEngine @Inject constructor(
     val events: SharedFlow<String> = _events.asSharedFlow()
 
     @Volatile var config: SpiritBoxConfig = SpiritBoxConfig()
+    @Volatile private var latestStorageType: RecordingStorageType = RecordingStorageType.APP_PRIVATE
+    @Volatile private var latestSafTreeUri: String? = null
 
     private val isRunning = AtomicBoolean(false)
     private val isHeld = AtomicBoolean(false)
     private val focusPaused = AtomicBoolean(false)
+    private val micCaptureRunning = AtomicBoolean(false)
 
     private var sweepThread: Thread? = null
     private var micThread: Thread? = null
@@ -134,11 +145,35 @@ class SpiritBoxEngine @Inject constructor(
     private val sessionHopLog = CopyOnWriteArrayList<SpiritBoxHopLogItem>()
 
     private var sessionStartMillis = 0L
-    private var mixOutFile: File? = null
-    private var micOutFile: File? = null
-    private var mixFramesWritten = 0L
+
+    // Thread-safe live-toggleable recorder state for sweep mix WAV
+    private val mixRecorderLock = Any()
+    private var activeMixTarget: DirectWavTarget? = null
+    private var activeMixBytesWritten: Long = 0L
+    private var activeMixStartElapsedMs: Long = 0L
+    private var lastMixHeaderPatchMs: Long = 0L
+    @Volatile private var lastSavedMixRecId: Long? = null
+    @Volatile private var lastSavedMicRecId: Long? = null
 
     private val fftProcessor = FftProcessor(2048, FftWindowType.HANN)
+
+    init {
+        scope.launch {
+            settingsDataStore.settingsFlow.collect { s ->
+                latestStorageType = s.storageType
+                latestSafTreeUri = s.safTreeUri
+                config = config.copy(
+                    streamUrls = s.spiritBoxStreamUrls,
+                    recorderEnabled = s.spiritBoxRecorderEnabled,
+                    recordSessionMix = s.spiritBoxRecordSweepOutput,
+                    recordMicTrack = s.spiritBoxRecordMicTrack
+                )
+                _liveState.value = _liveState.value.copy(
+                    isRecorderEnabled = s.spiritBoxRecorderEnabled
+                )
+            }
+        }
+    }
 
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
@@ -160,6 +195,94 @@ class SpiritBoxEngine @Inject constructor(
 
     fun updateConfig(newConfig: SpiritBoxConfig) {
         config = newConfig
+        _liveState.value = _liveState.value.copy(isRecorderEnabled = newConfig.recorderEnabled)
+    }
+
+    /**
+     * Master ON/OFF toggle for Spirit Box recording (works both before and live during a sweep).
+     * Persists to DataStore, logs state transitions, and safely starts or finalizes WAV files
+     * in the user's chosen Save Location without ever creating empty files.
+     */
+    fun setRecorderEnabled(enabled: Boolean) {
+        val prev = config.recorderEnabled
+        config = config.copy(recorderEnabled = enabled)
+        _liveState.value = _liveState.value.copy(isRecorderEnabled = enabled)
+
+        scope.launch {
+            settingsDataStore.setSpiritBoxRecorderEnabled(enabled)
+        }
+
+        if (prev != enabled) {
+            val stateMsg = if (enabled) "Spirit Box recorder turned ON" else "Spirit Box recorder turned OFF"
+            logger.info(AppFeature.SPIRIT_BOX_RECORDER, stateMsg)
+            logger.reportSuccess(
+                AppFeature.SPIRIT_BOX_RECORDER,
+                if (enabled) "Recorder ON" else "Recorder OFF"
+            )
+        }
+
+        if (!isRunning.get()) return
+
+        if (enabled) {
+            scope.launch {
+                var startedAny = false
+                if (config.recordSessionMix) {
+                    startedAny = openMixTargetIfAllowed() || startedAny
+                }
+                if (config.recordMicTrack) {
+                    startedAny = startMicCompanionIfAllowed() || startedAny
+                }
+                refreshRecordingFlag()
+                if (startedAny) {
+                    _events.tryEmit("Spirit Box recorder ON — recording started")
+                } else {
+                    _events.tryEmit("Spirit Box recorder ON (enable sweep or mic track to save audio)")
+                }
+            }
+        } else {
+            val hadMix = synchronized(mixRecorderLock) { activeMixTarget != null }
+            val hadMic = micCaptureRunning.get()
+            detachAndFinalizeMixSegmentAsync(sessionMarkers.toList(), config.bandMode.displayName)
+            stopMicCompanionLive()
+            refreshRecordingFlag()
+            if (hadMix || hadMic) {
+                _events.tryEmit("Spirit Box recorder OFF — recording saved to Library")
+            } else {
+                _events.tryEmit("Recording is off. Nothing is saved.")
+            }
+        }
+    }
+
+    fun setRecordSweepOutput(enabled: Boolean) {
+        config = config.copy(recordSessionMix = enabled)
+        scope.launch {
+            settingsDataStore.setSpiritBoxRecordSweepOutput(enabled)
+        }
+        if (isRunning.get() && config.recorderEnabled) {
+            if (enabled) {
+                scope.launch {
+                    openMixTargetIfAllowed()
+                    refreshRecordingFlag()
+                }
+            } else {
+                detachAndFinalizeMixSegmentAsync(sessionMarkers.toList(), config.bandMode.displayName)
+            }
+        }
+    }
+
+    fun setRecordMicTrack(enabled: Boolean) {
+        config = config.copy(recordMicTrack = enabled)
+        scope.launch {
+            settingsDataStore.setSpiritBoxRecordMicTrack(enabled)
+        }
+        if (isRunning.get() && config.recorderEnabled) {
+            if (enabled) {
+                startMicCompanionIfAllowed()
+            } else {
+                stopMicCompanionLive()
+            }
+            refreshRecordingFlag()
+        }
     }
 
     fun toggleHold() {
@@ -169,8 +292,9 @@ class SpiritBoxEngine @Inject constructor(
         _liveState.value = _liveState.value.copy(isHeld = next)
     }
 
-    fun addMarker(label: String = "", note: String = "") {
-        if (!isRunning.get()) return
+    fun addMarker(label: String = "", note: String = "", bypassDebounce: Boolean = false): Boolean {
+        if (!isRunning.get()) return false
+        if (!bypassDebounce && !markerDebouncer.tryAcquire()) return false
         val ts = currentElapsedMs()
         val idx = sessionMarkers.size + 1
         val item = MarkerExportItem(
@@ -182,6 +306,7 @@ class SpiritBoxEngine @Inject constructor(
         _liveState.value = _liveState.value.copy(markersCount = sessionMarkers.size)
         logger.reportSuccess(AppFeature.MARKERS, "Spirit Box marker added at ${AudioMath.formatDuration(ts)}")
         _events.tryEmit("Marked ${AudioMath.formatDuration(ts)}")
+        return true
     }
 
     fun addQuestion(questionText: String, inputMode: String = "TEXT") {
@@ -192,7 +317,7 @@ class SpiritBoxEngine @Inject constructor(
         sessionQuestions.add(q)
         _liveState.value = _liveState.value.copy(questions = sessionQuestions.toList())
         if (isRunning.get()) {
-            addMarker(label = "Question", note = clean)
+            addMarker(label = "Question", note = clean, bypassDebounce = true)
         }
         _events.tryEmit("Question logged")
     }
@@ -210,7 +335,9 @@ class SpiritBoxEngine @Inject constructor(
         }
 
         sessionStartMillis = System.currentTimeMillis()
-        mixFramesWritten = 0L
+        lastSavedMixRecId = null
+        lastSavedMicRecId = null
+        markerDebouncer.reset()
         sessionMarkers.clear()
         sessionQuestions.clear()
         sessionHopLog.clear()
@@ -228,44 +355,39 @@ class SpiritBoxEngine @Inject constructor(
             prepareRadioPool(config.streamUrls.take(MAX_RADIO_PLAYERS))
         }
 
-        // Prepare session mix WAV output if enabled
-        mixOutFile = if (config.recordSessionMix && StorageHelper.hasSufficientSpace(context, 15L * 1024L * 1024L)) {
-            StorageHelper.createWorkingFile(
-                context,
-                FaintRecFolder.SPIRIT_BOX,
-                AudioMath.timestampFileName("SpiritBox_Mix", "wav")
-            )
-        } else null
-
-        // Optional 2nd-track microphone recording ONLY if enabled & permission granted
-        val canRecordMic = config.recordMicTrack &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        micOutFile = if (canRecordMic && StorageHelper.hasSufficientSpace(context, 15L * 1024L * 1024L)) {
-            StorageHelper.createWorkingFile(
-                context,
-                FaintRecFolder.SPIRIT_BOX,
-                AudioMath.timestampFileName("SpiritBox_Mic", "wav")
-            )
-        } else null
-
         isRunning.set(true)
         isHeld.set(false)
         focusPaused.set(false)
+
+        // Open direct WAV targets ONLY when Recorder is ON (respecting chosen Save Location).
+        // When Recorder is OFF, NEVER open files or touch the microphone.
+        var recordingStarted = false
+        if (config.recorderEnabled) {
+            if (config.recordSessionMix) {
+                recordingStarted = openMixTargetIfAllowed() || recordingStarted
+            }
+            if (config.recordMicTrack) {
+                recordingStarted = startMicCompanionIfAllowed() || recordingStarted
+            }
+            logger.reportSuccess(
+                AppFeature.SPIRIT_BOX_RECORDER,
+                if (recordingStarted) "Recording active (${latestStorageType.name})" else "Recorder ON (no track selected)"
+            )
+        } else {
+            logger.reportSuccess(AppFeature.SPIRIT_BOX_RECORDER, "Recorder OFF — sweep without saving audio")
+        }
 
         val startFreq = SpiritBoxDialMath.formatFrequency(config.bandMode, config.rangeStartFraction)
         _liveState.value = SpiritBoxLiveState(
             isRunning = true,
             isHeld = false,
+            isRecorderEnabled = config.recorderEnabled,
+            isActivelyRecording = recordingStarted,
             dialFraction = config.rangeStartFraction,
             currentFrequencyLabel = startFreq,
             activeSourceLabel = if (config.blindTestMode) "Blind Test Active" else "Sweeping",
             showBlindReveal = false
         )
-
-        if (canRecordMic && micOutFile != null) {
-            startMicCompanionCapture(micOutFile!!)
-        }
 
         startAudioSweepLoop()
         logger.reportSuccess(AppFeature.SPIRIT_BOX_STATIC, "Spirit Box sweep session started")
@@ -276,6 +398,7 @@ class SpiritBoxEngine @Inject constructor(
         if (!isRunning.compareAndSet(true, false)) return
         isHeld.set(false)
         focusPaused.set(false)
+        micCaptureRunning.set(false)
 
         releaseRadioPool()
         abandonAudioFocus()
@@ -285,10 +408,154 @@ class SpiritBoxEngine @Inject constructor(
             isRunning = false,
             isHeld = false,
             isPausedByAudioFocus = false,
+            isActivelyRecording = false,
             activeSourceLabel = "Stopped",
             blindTestRevealHops = if (reveal) sessionHopLog.toList() else emptyList(),
             showBlindReveal = reveal
         )
+    }
+
+    private fun refreshRecordingFlag() {
+        val activeMix = synchronized(mixRecorderLock) { activeMixTarget != null }
+        val activeMic = micCaptureRunning.get()
+        _liveState.value = _liveState.value.copy(
+            isRecorderEnabled = config.recorderEnabled,
+            isActivelyRecording = isRunning.get() && (activeMix || activeMic)
+        )
+    }
+
+    private fun openMixTargetIfAllowed(): Boolean {
+        if (!config.recorderEnabled || !config.recordSessionMix) return false
+        synchronized(mixRecorderLock) {
+            if (activeMixTarget != null) return true
+        }
+        val storageType = latestStorageType
+        val safUri = latestSafTreeUri
+        val free = storageLocationManager.getCurrentFreeBytes(storageType, safUri)
+        if (free in 0L until StorageLocationManager.CRITICAL_STOP_BYTES) {
+            logger.warn(AppFeature.SPIRIT_BOX_RECORDER, "Insufficient storage space to record Spirit Box mix")
+            _events.tryEmit("Storage nearly full — Spirit Box audio not recorded.")
+            return false
+        }
+        val fileName = AudioMath.timestampFileName("SpiritBox_Mix", "wav")
+        val targetRes = storageLocationManager.openDirectWavTarget(
+            storageType = storageType,
+            safTreeUri = safUri,
+            fileName = fileName,
+            sampleRate = SAMPLE_RATE,
+            channels = 1,
+            bitsPerSample = 16,
+            isFloat = false,
+            deviceName = "Spirit Box (${config.bandMode.displayName})",
+            sourceLabel = "SPIRIT_BOX_MIX",
+            saveRaw = false,
+            gainDb = 0f
+        )
+        val target = targetRes.getOrElse { err ->
+            logger.reportFailure(AppFeature.SPIRIT_BOX_RECORDER, "Cannot open Spirit Box WAV target: ${err.message}", err)
+            _events.tryEmit("Save location unavailable for Spirit Box recording: ${err.message}")
+            return false
+        }
+        return try {
+            target.writePlaceholderHeader(SAMPLE_RATE, 1, 16, isFloat = false)
+            synchronized(mixRecorderLock) {
+                activeMixTarget = target
+                activeMixBytesWritten = 0L
+                activeMixStartElapsedMs = currentElapsedMs()
+                lastMixHeaderPatchMs = System.currentTimeMillis()
+            }
+            true
+        } catch (e: Exception) {
+            target.abortAndDelete()
+            logger.reportFailure(AppFeature.SPIRIT_BOX_RECORDER, "WAV header write failed: ${e.message}", e)
+            false
+        }
+    }
+
+    private fun detachAndFinalizeMixSegmentAsync(
+        markersSnapshot: List<MarkerExportItem>,
+        bandName: String
+    ) {
+        val detached = synchronized(mixRecorderLock) {
+            val t = activeMixTarget ?: return
+            val bytes = activeMixBytesWritten
+            val startMs = activeMixStartElapsedMs
+            activeMixTarget = null
+            activeMixBytesWritten = 0L
+            Triple(t, bytes, startMs)
+        }
+        refreshRecordingFlag()
+        scope.launch {
+            finalizeSingleMixTarget(detached.first, detached.second, detached.third, markersSnapshot, bandName)
+        }
+    }
+
+    private suspend fun finalizeSingleMixTarget(
+        target: DirectWavTarget,
+        dataBytes: Long,
+        segmentStartElapsedMs: Long,
+        markersSnapshot: List<MarkerExportItem>,
+        bandName: String
+    ): Long? {
+        val segmentMarkers = markersSnapshot
+            .filter { it.timestampMs >= segmentStartElapsedMs }
+            .map { it.copy(timestampMs = (it.timestampMs - segmentStartElapsedMs).coerceAtLeast(0L)) }
+
+        val cues = segmentMarkers.mapIndexed { idx, m ->
+            WavCuePoint(
+                id = idx + 1,
+                sampleOffset = (m.timestampMs * SAMPLE_RATE) / 1000L,
+                label = if (m.note.isNotBlank()) "${m.label}: ${m.note}" else m.label
+            )
+        }
+        val summary = try {
+            target.finalizeAndClose(
+                dataBytes = dataBytes,
+                cues = cues,
+                fallbackSampleRate = SAMPLE_RATE,
+                fallbackChannels = 1,
+                fallbackIsFloat = false
+            )
+        } catch (e: Exception) {
+            logger.reportFailure(AppFeature.SPIRIT_BOX_RECORDER, "Finalize Spirit Box WAV failed: ${e.message}", e)
+            return null
+        } ?: return null // dataBytes <= 0 -> already deleted cleanly, never create empty files
+
+        val entity = RecordingEntity(
+            title = target.fileName.substringBeforeLast('.'),
+            filePath = target.filePath,
+            mediaStoreUri = if (target.storageType == RecordingStorageType.PUBLIC_DOCUMENTS) target.contentUri else null,
+            storageType = target.storageType,
+            storageUri = target.contentUri,
+            durationMs = summary.durationMs,
+            fileSizeBytes = summary.fileSizeBytes,
+            format = "WAV",
+            sampleRate = summary.sampleRate,
+            channels = summary.channels,
+            bitsPerSample = summary.bitsPerSample,
+            isFloatPcm = summary.isFloat,
+            sourceTag = RecordingSourceTag.SPIRIT_BOX,
+            audioSourceUsed = "SPIRIT_BOX_MIX",
+            inputDeviceName = "Spirit Box ($bandName)"
+        )
+        val recId = repository.insertRecording(entity)
+        lastSavedMixRecId = recId
+        if (segmentMarkers.isNotEmpty()) {
+            repository.insertMarkers(
+                segmentMarkers.map { m ->
+                    MarkerEntity(
+                        recordingId = recId,
+                        timestampMs = m.timestampMs,
+                        label = m.label,
+                        note = m.note
+                    )
+                }
+            )
+        }
+        _liveState.value = _liveState.value.copy(lastSavedMixTitle = entity.title)
+        logger.reportSuccess(AppFeature.SPIRIT_BOX_RECORDER, "Saved Spirit Box WAV (${entity.title})")
+        _events.tryEmit("Saved Spirit Box mix to Library: ${entity.title}")
+        return recId
     }
 
     private fun startAudioSweepLoop() {
@@ -325,16 +592,6 @@ class SpiritBoxEngine @Inject constructor(
             }
 
             audioTrack = track
-            val outWav = mixOutFile
-            val wavRaf = outWav?.let {
-                runCatching {
-                    RandomAccessFile(it, "rw").apply {
-                        setLength(0L)
-                        WavFileHelper.writePlaceholderHeader(this, SAMPLE_RATE, 1, 16, isFloat = false)
-                    }
-                }.getOrNull()
-            }
-            var dataBytesWritten = 0L
 
             val chunkFrames = 1024
             val mixBuf = FloatArray(chunkFrames)
@@ -365,7 +622,6 @@ class SpiritBoxEngine @Inject constructor(
             var curFragPos = 0
             var xfadeTotalFrames = 0
             var xfadeCursor = 0
-            var activeRadioIdx = -1
 
             try {
                 track.play()
@@ -413,12 +669,10 @@ class SpiritBoxEngine @Inject constructor(
                                 curFragBuf = FloatArray(0)
                                 curFragPos = 0
                                 val switched = activateRandomRadioPlayer(cfg.sourceLevel * cfg.outputVolume.coerceAtMost(SAFE_MAX_VOLUME), rng)
-                                activeRadioIdx = switched.first
                                 sourceDetail = switched.second
                             }
                             "LOCAL_AUDIO" -> {
                                 muteAllRadioPlayers()
-                                activeRadioIdx = -1
                                 val slice = readRandomLocalFragment(framesUntilNextHop + xfadeTotalFrames, rng)
                                 curFragBuf = slice.first
                                 curFragPos = 0
@@ -426,7 +680,6 @@ class SpiritBoxEngine @Inject constructor(
                             }
                             "OFFLINE_TTS" -> {
                                 muteAllRadioPlayers()
-                                activeRadioIdx = -1
                                 val ttsBuf = ttsFragmentPool.takeIf { it.isNotEmpty() }?.let {
                                     it[rng.nextInt(it.size)]
                                 } ?: FloatArray(0)
@@ -436,7 +689,6 @@ class SpiritBoxEngine @Inject constructor(
                             }
                             else -> {
                                 muteAllRadioPlayers()
-                                activeRadioIdx = -1
                                 curFragBuf = FloatArray(0)
                                 curFragPos = 0
                                 sourceDetail = cfg.staticNoiseType.displayName
@@ -465,8 +717,8 @@ class SpiritBoxEngine @Inject constructor(
                         )
                     }
 
-                    // Synthesize & mix this chunk
-                    val staticGain = if (cfg.enableGeneratedStatic) cfg.staticLevel.coerceIn(0f, 1f) * 0.45f else 0f
+                    // Synthesize & mix this chunk (calibrated so default staticLevel=0.55f yields ~-30 dBFS RMS)
+                    val staticGain = if (cfg.enableGeneratedStatic) cfg.staticLevel.coerceIn(0f, 1f) * 1.15f else 0f
                     val srcGain = cfg.sourceLevel.coerceIn(0f, 1f)
                     val masterVol = cfg.outputVolume.coerceIn(0f, SAFE_MAX_VOLUME)
                     val tuneFreqHz = 620.0 + dialFrac * 1100.0
@@ -536,9 +788,24 @@ class SpiritBoxEngine @Inject constructor(
 
                     track.write(mixBuf, 0, chunkFrames, AudioTrack.WRITE_BLOCKING)
 
-                    if (wavRaf != null) {
-                        dataBytesWritten += WavFileHelper.writeFloatSamples(wavRaf, mixBuf, chunkFrames, writeAsFloat32 = false)
-                        mixFramesWritten += chunkFrames
+                    // Direct-to-destination WAV write when Recorder & Sweep Output are ON
+                    val now = System.currentTimeMillis()
+                    synchronized(mixRecorderLock) {
+                        val target = activeMixTarget
+                        if (target != null) {
+                            try {
+                                activeMixBytesWritten += target.writeFloatSamples(mixBuf, chunkFrames, writeAsFloat32 = false)
+                                if (now - lastMixHeaderPatchMs >= 5000L) {
+                                    lastMixHeaderPatchMs = now
+                                    target.patchHeaderPeriodic(activeMixBytesWritten)
+                                }
+                            } catch (e: Exception) {
+                                logger.reportFailure(AppFeature.SPIRIT_BOX_RECORDER, "Spirit Box WAV write failed: ${e.message}", e)
+                                runCatching { target.abortAndDelete() }
+                                activeMixTarget = null
+                                activeMixBytesWritten = 0L
+                            }
+                        }
                     }
 
                     // Update live FFT & waveform telemetry
@@ -552,7 +819,6 @@ class SpiritBoxEngine @Inject constructor(
                         System.arraycopy(mixBuf, 0, fftAccum, fftAccum.size - shift, shift)
                         fftPos = fftAccum.size
                     }
-                    val now = System.currentTimeMillis()
                     if (now - lastFftMs >= 80L && fftPos >= 1024) {
                         lastFftMs = now
                         val snap = fftAccum.copyOfRange(0, fftPos)
@@ -567,10 +833,13 @@ class SpiritBoxEngine @Inject constructor(
                         waveRing[(waveIdx + idx) % waveRing.size]
                     }
                     val rmsDb = AudioMath.linearToDb(sqrt(sumSq / chunkFrames).toFloat())
+                    val recordingNow = synchronized(mixRecorderLock) { activeMixTarget != null } || micCaptureRunning.get()
                     _liveState.value = _liveState.value.copy(
                         elapsedMs = currentElapsedMs(),
                         outputDb = rmsDb,
-                        waveform = orderedWave
+                        waveform = orderedWave,
+                        isRecorderEnabled = cfg.recorderEnabled,
+                        isActivelyRecording = recordingNow
                     )
                 }
             } catch (e: Exception) {
@@ -584,51 +853,60 @@ class SpiritBoxEngine @Inject constructor(
                 }
                 audioTrack = null
 
-                try {
-                    wavRaf?.let {
-                        WavFileHelper.patchWavHeaderSizes(it, dataBytesWritten)
-                        it.close()
-                    }
-                } catch (_: Exception) {
-                }
-
-                // Wait briefly for optional mic thread to finish cleanly before saving session
+                micCaptureRunning.set(false)
                 try {
                     micThread?.join(1500L)
                 } catch (_: Exception) {
                 }
                 micThread = null
 
-                finalizeSession(outWav, micOutFile)
+                finalizeSession()
             }
         }, "FaintRec-SpiritBox").apply { start() }
     }
 
     @SuppressLint("MissingPermission")
-    private fun startMicCompanionCapture(targetFile: File) {
+    private fun startMicCompanionIfAllowed(): Boolean {
+        if (!isRunning.get() || !config.recorderEnabled || !config.recordMicTrack) return false
+        val hasMicPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!hasMicPerm) return false
+        if (!micCaptureRunning.compareAndSet(false, true)) return true
+
+        val storageType = latestStorageType
+        val safUri = latestSafTreeUri
+        val free = storageLocationManager.getCurrentFreeBytes(storageType, safUri)
+        if (free in 0L until StorageLocationManager.CRITICAL_STOP_BYTES) {
+            micCaptureRunning.set(false)
+            logger.warn(AppFeature.SPIRIT_BOX_RECORDER, "Insufficient storage for Spirit Box mic track")
+            return false
+        }
+
         micThread = Thread({
             val minBuf = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            if (minBuf <= 0) return@Thread
-            val recorder = runCatching {
-                AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.UNPROCESSED)
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setSampleRate(SAMPLE_RATE)
-                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(max(minBuf * 3, 16384))
-                    .build()
-            }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED }
-                ?: runCatching {
+            if (minBuf <= 0) {
+                micCaptureRunning.set(false)
+                return@Thread
+            }
+
+            // Gated source fallback: UNPROCESSED only when property is "true", then VOICE_RECOGNITION, then MIC
+            val candidates = mutableListOf<Pair<Int, String>>()
+            if (deviceManager.supportsUnprocessedSource()) {
+                candidates.add(MediaRecorder.AudioSource.UNPROCESSED to "UNPROCESSED")
+            }
+            candidates.add(MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION")
+            candidates.add(MediaRecorder.AudioSource.MIC to "MIC")
+
+            var recorder: AudioRecord? = null
+            var chosenSource = "MIC"
+            for ((src, label) in candidates) {
+                val r = runCatching {
                     AudioRecord.Builder()
-                        .setAudioSource(MediaRecorder.AudioSource.MIC)
+                        .setAudioSource(src)
                         .setAudioFormat(
                             AudioFormat.Builder()
                                 .setSampleRate(SAMPLE_RATE)
@@ -638,115 +916,137 @@ class SpiritBoxEngine @Inject constructor(
                         )
                         .setBufferSizeInBytes(max(minBuf * 3, 16384))
                         .build()
-                }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED }
-                ?: return@Thread
+                }.getOrNull()
+                if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
+                    recorder = r
+                    chosenSource = label
+                    break
+                } else {
+                    runCatching { r?.release() }
+                }
+            }
+            val activeRecorder = recorder ?: run {
+                micCaptureRunning.set(false)
+                return@Thread
+            }
+            AudioDeviceManager.disableAndReleaseAutoAttachedEffects(activeRecorder.audioSessionId)
+
+            val fileName = AudioMath.timestampFileName("SpiritBox_Mic", "wav")
+            val target = storageLocationManager.openDirectWavTarget(
+                storageType = storageType,
+                safTreeUri = safUri,
+                fileName = fileName,
+                sampleRate = SAMPLE_RATE,
+                channels = 1,
+                bitsPerSample = 16,
+                isFloat = false,
+                deviceName = "Spirit Box Mic Track",
+                sourceLabel = chosenSource,
+                saveRaw = true,
+                gainDb = 0f
+            ).getOrNull()
+
+            if (target == null) {
+                runCatching { activeRecorder.release() }
+                micCaptureRunning.set(false)
+                return@Thread
+            }
 
             val shorts = ShortArray(2048)
             val floats = FloatArray(2048)
             var bytesWritten = 0L
+            var lastPatchMs = System.currentTimeMillis()
 
             try {
-                RandomAccessFile(targetFile, "rw").use { raf ->
-                    raf.setLength(0L)
-                    WavFileHelper.writePlaceholderHeader(raf, SAMPLE_RATE, 1, 16, isFloat = false)
-                    recorder.startRecording()
-                    while (isRunning.get()) {
-                        val n = recorder.read(shorts, 0, shorts.size)
-                        if (n > 0) {
-                            for (i in 0 until n) floats[i] = shorts[i] / 32768f
-                            bytesWritten += WavFileHelper.writeFloatSamples(raf, floats, n, writeAsFloat32 = false)
+                target.writePlaceholderHeader(SAMPLE_RATE, 1, 16, isFloat = false)
+                activeRecorder.startRecording()
+                while (isRunning.get() && micCaptureRunning.get()) {
+                    val n = activeRecorder.read(shorts, 0, shorts.size)
+                    if (n > 0) {
+                        for (i in 0 until n) floats[i] = shorts[i] / 32768f
+                        bytesWritten += target.writeFloatSamples(floats, n, writeAsFloat32 = false)
+                        val now = System.currentTimeMillis()
+                        if (now - lastPatchMs >= 5000L) {
+                            lastPatchMs = now
+                            target.patchHeaderPeriodic(bytesWritten)
                         }
                     }
-                    WavFileHelper.patchWavHeaderSizes(raf, bytesWritten)
                 }
             } catch (e: Exception) {
-                logger.warn(AppFeature.RECORDING_UNPROCESSED, "Spirit Box mic track error: ${e.message}")
+                logger.warn(AppFeature.SPIRIT_BOX_RECORDER, "Spirit Box mic track error: ${e.message}")
             } finally {
-                runCatching { recorder.stop() }
-                runCatching { recorder.release() }
+                micCaptureRunning.set(false)
+                runCatching { activeRecorder.stop() }
+                runCatching { activeRecorder.release() }
+                val summary = runCatching {
+                    target.finalizeAndClose(
+                        dataBytes = bytesWritten,
+                        cues = emptyList(),
+                        fallbackSampleRate = SAMPLE_RATE,
+                        fallbackChannels = 1,
+                        fallbackIsFloat = false
+                    )
+                }.getOrNull()
+                if (summary != null) {
+                    scope.launch {
+                        val micEntity = RecordingEntity(
+                            title = target.fileName.substringBeforeLast('.'),
+                            filePath = target.filePath,
+                            mediaStoreUri = if (target.storageType == RecordingStorageType.PUBLIC_DOCUMENTS) target.contentUri else null,
+                            storageType = target.storageType,
+                            storageUri = target.contentUri,
+                            durationMs = summary.durationMs,
+                            fileSizeBytes = summary.fileSizeBytes,
+                            format = "WAV",
+                            sampleRate = summary.sampleRate,
+                            channels = summary.channels,
+                            bitsPerSample = summary.bitsPerSample,
+                            isFloatPcm = summary.isFloat,
+                            sourceTag = RecordingSourceTag.SPIRIT_BOX,
+                            audioSourceUsed = chosenSource,
+                            inputDeviceName = "Spirit Box Mic Track"
+                        )
+                        lastSavedMicRecId = repository.insertRecording(micEntity)
+                        logger.reportSuccess(AppFeature.SPIRIT_BOX_RECORDER, "Saved Spirit Box mic track (${micEntity.title})")
+                    }
+                }
+                refreshRecordingFlag()
             }
         }, "FaintRec-SBMic").apply { start() }
+        return true
     }
 
-    private fun finalizeSession(mixFile: File?, micFile: File?) {
+    private fun stopMicCompanionLive() {
+        micCaptureRunning.set(false)
+    }
+
+    private fun finalizeSession() {
         val durationMs = currentElapsedMs()
         val cfg = config
         val markersCopy = sessionMarkers.toList()
         val questionsCopy = sessionQuestions.toList()
         val hopsCopy = sessionHopLog.toList()
 
+        val remainingMix = synchronized(mixRecorderLock) {
+            val t = activeMixTarget
+            val bytes = activeMixBytesWritten
+            val startMs = activeMixStartElapsedMs
+            activeMixTarget = null
+            activeMixBytesWritten = 0L
+            if (t != null) Triple(t, bytes, startMs) else null
+        }
+
         scope.launch {
-            var mixRecId: Long? = null
-            var micRecId: Long? = null
-
-            if (mixFile != null && mixFile.exists() && mixFile.length() > 44L) {
-                if (markersCopy.isNotEmpty()) {
-                    val cues = markersCopy.mapIndexed { idx, m ->
-                        WavCuePoint(
-                            id = idx + 1,
-                            sampleOffset = (m.timestampMs * SAMPLE_RATE) / 1000L,
-                            label = if (m.note.isNotBlank()) "${m.label}: ${m.note}" else m.label
-                        )
-                    }
-                    WavFileHelper.appendCueChunks(mixFile, cues)
-                }
-                val uri = StorageHelper.publishToMediaStore(
-                    context, mixFile, FaintRecFolder.SPIRIT_BOX, "audio/wav", mixFile.name
+            var mixRecId = lastSavedMixRecId
+            if (remainingMix != null) {
+                val finalizedId = finalizeSingleMixTarget(
+                    target = remainingMix.first,
+                    dataBytes = remainingMix.second,
+                    segmentStartElapsedMs = remainingMix.third,
+                    markersSnapshot = markersCopy,
+                    bandName = cfg.bandMode.displayName
                 )
-                val info = WavFileHelper.parseWavInfo(mixFile)
-                val mixEntity = RecordingEntity(
-                    title = mixFile.nameWithoutExtension,
-                    filePath = mixFile.absolutePath,
-                    mediaStoreUri = uri,
-                    durationMs = info?.durationMs ?: durationMs,
-                    fileSizeBytes = mixFile.length(),
-                    format = "WAV",
-                    sampleRate = SAMPLE_RATE,
-                    channels = 1,
-                    bitsPerSample = 16,
-                    isFloatPcm = false,
-                    sourceTag = RecordingSourceTag.SPIRIT_BOX,
-                    audioSourceUsed = "SPIRIT_BOX_MIX",
-                    inputDeviceName = "Spirit Box (${cfg.bandMode.displayName})"
-                )
-                mixRecId = repository.insertRecording(mixEntity)
-                if (markersCopy.isNotEmpty()) {
-                    repository.insertMarkers(
-                        markersCopy.map { m ->
-                            MarkerEntity(
-                                recordingId = mixRecId,
-                                timestampMs = m.timestampMs,
-                                label = m.label,
-                                note = m.note
-                            )
-                        }
-                    )
-                }
-                _liveState.value = _liveState.value.copy(lastSavedMixTitle = mixEntity.title)
-                _events.tryEmit("Saved Spirit Box mix to Library: ${mixEntity.title}")
-            }
-
-            if (micFile != null && micFile.exists() && micFile.length() > 44L) {
-                val uri = StorageHelper.publishToMediaStore(
-                    context, micFile, FaintRecFolder.SPIRIT_BOX, "audio/wav", micFile.name
-                )
-                val info = WavFileHelper.parseWavInfo(micFile)
-                val micEntity = RecordingEntity(
-                    title = micFile.nameWithoutExtension,
-                    filePath = micFile.absolutePath,
-                    mediaStoreUri = uri,
-                    durationMs = info?.durationMs ?: durationMs,
-                    fileSizeBytes = micFile.length(),
-                    format = "WAV",
-                    sampleRate = SAMPLE_RATE,
-                    channels = 1,
-                    bitsPerSample = 16,
-                    isFloatPcm = false,
-                    sourceTag = RecordingSourceTag.SPIRIT_BOX,
-                    audioSourceUsed = "MIC_COMPANION",
-                    inputDeviceName = "Spirit Box Mic Track"
-                )
-                micRecId = repository.insertRecording(micEntity)
+                if (finalizedId != null) mixRecId = finalizedId
             }
 
             val sourcesUsed = buildList {
@@ -760,7 +1060,7 @@ class SpiritBoxEngine @Inject constructor(
                 startedAtMillis = sessionStartMillis,
                 durationMs = durationMs,
                 recordingId = mixRecId,
-                micRecordingId = micRecId,
+                micRecordingId = lastSavedMicRecId,
                 bandMode = cfg.bandMode.name,
                 scanSpeedMs = cfg.scanSpeedMs,
                 jitterEnabled = cfg.jitterEnabled,
@@ -792,8 +1092,10 @@ class SpiritBoxEngine @Inject constructor(
             val recs = repository.getAllRecordingsOnce()
             val wavs = recs
                 .filter { it.format.equals("WAV", ignoreCase = true) }
-                .map { File(it.filePath) }
-                .filter { it.exists() && it.length() > 4096L }
+                .mapNotNull { rec ->
+                    val direct = rec.filePath.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() && it.length() > 4096L }
+                    direct ?: storageLocationManager.resolveReadableFile(rec)?.takeIf { it.exists() && it.length() > 4096L }
+                }
             localWavPool.clear()
             localWavPool.addAll(wavs)
             if (wavs.isNotEmpty()) {
@@ -944,7 +1246,6 @@ class SpiritBoxEngine @Inject constructor(
                     engine.setSpeechRate(1.05f)
                     val res = engine.synthesizeToFile(word, null, outFile, "sb_word_$idx")
                     if (res == TextToSpeech.SUCCESS) {
-                        // Wait up to 900ms for TTS file write completion
                         var tries = 0
                         while ((!outFile.exists() || outFile.length() <= 44L) && tries < 18) {
                             Thread.sleep(50L)
@@ -959,7 +1260,6 @@ class SpiritBoxEngine @Inject constructor(
                                     WavFileHelper.readFramesAsFloat(raf, info, 0L, frames, raw)
                                 }
                                 if (read > 0) {
-                                    // Low-volume word fragment resampled linearly to 48 kHz
                                     val ratio = info.sampleRate.toDouble() / SAMPLE_RATE.toDouble()
                                     val outFrames = ((read / ratio).toInt()).coerceIn(1, SAMPLE_RATE * 2)
                                     val mono = FloatArray(outFrames) { f ->

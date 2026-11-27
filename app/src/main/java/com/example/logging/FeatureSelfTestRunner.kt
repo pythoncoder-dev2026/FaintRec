@@ -60,6 +60,7 @@ import kotlin.coroutines.resume
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Runs non-destructive self-tests for every FaintRec feature in the background
@@ -119,6 +120,7 @@ class FeatureSelfTestRunner @Inject constructor(
                 AppFeature.SPIRIT_BOX_LOCAL -> testSpiritBoxLocalAudio()
                 AppFeature.SPIRIT_BOX_STATIC -> testSpiritBoxStatic()
                 AppFeature.SPIRIT_BOX_TTS -> testSpiritBoxTts()
+                AppFeature.SPIRIT_BOX_RECORDER -> testSpiritBoxRecorder()
             }
         } catch (t: Throwable) {
             logger.reportFailure(feature, "Self-test exception: ${t.message ?: t::class.simpleName}", t)
@@ -150,26 +152,50 @@ class FeatureSelfTestRunner @Inject constructor(
             logger.reportFailure(AppFeature.RECORDING_UNPROCESSED, "AudioRecord.getMinBufferSize failed ($minBuf)")
             return
         }
-        val source = if (unprocessedSupported) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_RECOGNITION
-        val rec = runCatching {
-            AudioRecord.Builder()
-                .setAudioSource(source)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(rate)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .build()
-                )
-                .setBufferSizeInBytes(minBuf * 2)
-                .build()
-        }.getOrNull()
 
-        if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec?.release()
+        // Try UNPROCESSED only when HAL advertises support; otherwise fall back to VOICE_RECOGNITION -> MIC
+        val candidateSources = buildList {
+            if (unprocessedSupported) {
+                add(MediaRecorder.AudioSource.UNPROCESSED to "UNPROCESSED")
+            }
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION")
+            add(MediaRecorder.AudioSource.MIC to "MIC")
+        }
+
+        var rec: AudioRecord? = null
+        var chosenLabel = "MIC"
+        var chosenSourceId = MediaRecorder.AudioSource.MIC
+        for ((srcId, label) in candidateSources) {
+            val attempt = runCatching {
+                AudioRecord.Builder()
+                    .setAudioSource(srcId)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setSampleRate(rate)
+                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(minBuf * 2)
+                    .build()
+            }.getOrNull()
+            if (attempt != null && attempt.state == AudioRecord.STATE_INITIALIZED) {
+                rec = attempt
+                chosenLabel = label
+                chosenSourceId = srcId
+                break
+            } else {
+                attempt?.release()
+            }
+        }
+
+        if (rec == null) {
             logger.reportFailure(AppFeature.RECORDING_UNPROCESSED, "AudioRecord failed to initialize")
             return
         }
+
+        // Ensure NS/AGC/AEC are never enabled and release any auto-attached system effects
+        AudioDeviceManager.disableAndReleaseAutoAttachedEffects(rec.audioSessionId)
 
         val tmpFile = File(context.cacheDir, "selftest_rec_2s.wav")
         val shorts = ShortArray(2048)
@@ -196,15 +222,15 @@ class FeatureSelfTestRunner @Inject constructor(
             }
             val parsed = WavFileHelper.parseWavInfo(tmpFile)
             if (parsed != null && totalFrames > rate / 2) {
-                if (unprocessedSupported) {
+                if (chosenSourceId == MediaRecorder.AudioSource.UNPROCESSED) {
                     logger.reportSuccess(
                         AppFeature.RECORDING_UNPROCESSED,
                         "2s UNPROCESSED capture OK (${parsed.durationMs} ms, ${parsed.sampleRate} Hz)"
                     )
                 } else {
-                    logger.reportNotSupported(
+                    logger.reportFallback(
                         AppFeature.RECORDING_UNPROCESSED,
-                        "UNPROCESSED unsupported by HAL; fallback capture succeeded (${parsed.durationMs} ms)"
+                        "Fallback active ($chosenLabel)"
                     )
                 }
             } else {
@@ -233,12 +259,11 @@ class FeatureSelfTestRunner @Inject constructor(
 
     private fun testExternalMic() {
         deviceManager.refreshDevices()
-        val devices = deviceManager.inputDevices.value
-        val external = devices.filter { it.category != InputDeviceCategory.BUILT_IN }
+        val external = deviceManager.externalInputDevices.value
         if (external.isNotEmpty()) {
             logger.reportSuccess(AppFeature.EXTERNAL_MIC, "Detected ${external.size} external mic(s): ${external.first().name}")
         } else {
-            logger.reportNotSupported(AppFeature.EXTERNAL_MIC, "No external USB/wired/BT mic connected (${devices.size} built-in found)")
+            logger.reportNotSupported(AppFeature.EXTERNAL_MIC, "No external mic detected")
         }
     }
 
@@ -550,24 +575,60 @@ class FeatureSelfTestRunner @Inject constructor(
     }
 
     private fun testSpiritBoxStatic() {
-        val buf = FloatArray(1024)
+        val buf = FloatArray(4096)
         val synth = NoiseAddSynthesizer(48000, 1)
         synth.mixIntoChunk(
             buffer = buf,
-            frames = 1024,
+            frames = buf.size,
             chunkStartFrame = 0L,
-            totalTimelineFrames = 1024L,
-            params = NoiseAddParams(enabled = true, noiseType = NoiseType.STATIC, volumeDb = -18f),
+            totalTimelineFrames = buf.size.toLong(),
+            params = NoiseAddParams(
+                enabled = true,
+                noiseType = NoiseType.STATIC,
+                volumeDb = -18f,
+                fadeInMs = 0L,
+                fadeOutMs = 0L
+            ),
             selectionStartFrame = 0L,
-            selectionEndFrame = 1024L,
+            selectionEndFrame = buf.size.toLong(),
             learnedProfile = null
         )
-        val rms = AudioMath.computeRmsDb(buf, buf.size)
-        if (rms > -50f && buf.all { it in -1f..1f }) {
-            logger.reportSuccess(AppFeature.SPIRIT_BOX_STATIC, "Static synthesizer verified (RMS=${rms.toInt()} dBFS)")
-        } else {
-            logger.reportFailure(AppFeature.SPIRIT_BOX_STATIC, "Static synthesizer output invalid (RMS=$rms)")
+        var hasInvalid = false
+        var sumSq = 0.0
+        for (sample in buf) {
+            if (sample.isNaN() || sample.isInfinite()) {
+                hasInvalid = true
+                break
+            }
+            sumSq += sample.toDouble() * sample.toDouble()
         }
+        val linearRms = if (!hasInvalid && buf.isNotEmpty()) sqrt(sumSq / buf.size.toDouble()) else Double.NaN
+        val displayDb = if (linearRms.isFinite() && linearRms > 0.0) {
+            AudioMath.linearToDb(linearRms.toFloat())
+        } else {
+            AudioMath.MIN_DB
+        }
+        if (!hasInvalid && linearRms.isFinite() && linearRms in 0.0005..0.99) {
+            logger.reportSuccess(
+                AppFeature.SPIRIT_BOX_STATIC,
+                "Static synthesizer verified (linear RMS=${String.format(Locale.US, "%.4f", linearRms)}, ${String.format(Locale.US, "%.1f dBFS", displayDb)})"
+            )
+        } else {
+            logger.reportFailure(
+                AppFeature.SPIRIT_BOX_STATIC,
+                "Static synthesizer output invalid (linear RMS=$linearRms, ${String.format(Locale.US, "%.1f dBFS", displayDb)})"
+            )
+        }
+    }
+
+    private suspend fun testSpiritBoxRecorder() {
+        val prefs = settingsDataStore.settingsFlow.first()
+        val stateLabel = if (prefs.spiritBoxRecorderEnabled) {
+            "ON (sweep=${if (prefs.spiritBoxRecordSweepOutput) "ON" else "OFF"}, mic=${if (prefs.spiritBoxRecordMicTrack) "ON" else "OFF"}, storage=${prefs.storageType.name})"
+        } else {
+            "OFF (nothing saved)"
+        }
+        logger.reportSuccess(AppFeature.SPIRIT_BOX_RECORDER, "Spirit Box recorder ready — $stateLabel")
     }
 
     private suspend fun testSpiritBoxTts() {

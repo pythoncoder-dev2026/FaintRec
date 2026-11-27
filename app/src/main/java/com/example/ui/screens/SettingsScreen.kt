@@ -3,8 +3,10 @@ package com.example.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,11 +18,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
@@ -37,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,9 +52,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
@@ -70,6 +77,7 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val inputDevices by viewModel.inputDevices.collectAsStateWithLifecycle()
+    val externalInputDevices by viewModel.externalInputDevices.collectAsStateWithLifecycle()
     val selectedDevice by viewModel.selectedDevice.collectAsStateWithLifecycle()
     val usbStatus by viewModel.usbPermissionStatus.collectAsStateWithLifecycle()
     val storageInfo by viewModel.storageInfo.collectAsStateWithLifecycle()
@@ -315,6 +323,119 @@ fun SettingsScreen(
             }
         }
 
+        // Spirit Box Recorder Settings (synced live with Spirit Box screen & DataStore)
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Radio, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Column {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        "${stringResource(R.string.spirit_box_title)} ${stringResource(R.string.spirit_box_recorder_title)}",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    if (settings.spiritBoxRecorderEnabled) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.error)
+                                        )
+                                        Text(
+                                            "REC",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = if (settings.spiritBoxRecorderEnabled) {
+                                        stringResource(R.string.spirit_box_recorder_desc)
+                                    } else {
+                                        stringResource(R.string.spirit_box_recording_off_notice)
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = settings.spiritBoxRecorderEnabled,
+                            onCheckedChange = { enabled -> viewModel.setSpiritBoxRecorderEnabled(enabled) },
+                            modifier = Modifier.testTag("settings_spirit_box_recorder_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.spirit_box_record_sweep),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (settings.spiritBoxRecorderEnabled) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = settings.spiritBoxRecordSweepOutput,
+                            enabled = settings.spiritBoxRecorderEnabled,
+                            onCheckedChange = { viewModel.setSpiritBoxRecordSweepOutput(it) },
+                            modifier = Modifier.testTag("settings_spirit_box_sweep_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.spirit_box_record_mic_track),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (settings.spiritBoxRecorderEnabled) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                            Text(
+                                text = "Microphone is never accessed when OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                    alpha = if (settings.spiritBoxRecorderEnabled) 1f else 0.6f
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = settings.spiritBoxRecordMicTrack,
+                            enabled = settings.spiritBoxRecorderEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled && settings.spiritBoxRecorderEnabled && !hasMicPermission) {
+                                    onRequestPermissions()
+                                }
+                                viewModel.setSpiritBoxRecordMicTrack(enabled)
+                            },
+                            modifier = Modifier.testTag("settings_spirit_box_mic_switch")
+                        )
+                    }
+                }
+            }
+        }
+
         // External Microphone Devices & USB Permission
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
@@ -329,6 +450,14 @@ fun SettingsScreen(
                             Spacer(Modifier.width(4.dp))
                             Text("USB Scan")
                         }
+                    }
+                    if (externalInputDevices.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.no_external_mic_detected),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("settings_no_external_mic_text")
+                        )
                     }
                     usbStatus?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)

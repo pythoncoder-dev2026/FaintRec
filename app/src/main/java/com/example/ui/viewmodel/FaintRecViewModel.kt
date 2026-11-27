@@ -32,6 +32,7 @@ import com.example.data.RecordingStorageType
 import com.example.data.SettingsDataStore
 import com.example.logging.AppLogger
 import com.example.service.RecordingForegroundService
+import com.example.spiritbox.SpiritBoxEngine
 import com.example.storage.StorageLocationInfo
 import com.example.storage.StorageLocationManager
 import com.example.ui.theme.ThemePreference
@@ -79,7 +80,8 @@ class FaintRecViewModel @Inject constructor(
     private val audioImporter: AudioImporter,
     private val postProcessor: PostProcessor,
     private val appLogger: AppLogger,
-    private val storageLocationManager: StorageLocationManager
+    private val storageLocationManager: StorageLocationManager,
+    private val spiritBoxEngine: SpiritBoxEngine
 ) : ViewModel() {
 
     val settings: StateFlow<FaintRecSettings> = settingsDataStore.settingsFlow.stateIn(
@@ -96,9 +98,11 @@ class FaintRecViewModel @Inject constructor(
     val playbackFft: StateFlow<FftResult?> = playbackController.playbackFft
 
     val inputDevices: StateFlow<List<AudioInputDeviceUi>> = deviceManager.inputDevices
+    val externalInputDevices: StateFlow<List<AudioInputDeviceUi>> = deviceManager.externalInputDevices
     val selectedDevice: StateFlow<AudioInputDeviceUi?> = deviceManager.selectedDevice
     val usbPermissionStatus: StateFlow<String?> = deviceManager.usbPermissionStatus
     val supportsUnprocessed: Boolean get() = deviceManager.supportsUnprocessedSource()
+    val recommendedAudioSourceLabel: String get() = deviceManager.getRecommendedAudioSourceLabel()
 
     private val _importProgress = MutableStateFlow<ImportProgress?>(null)
     val importProgress: StateFlow<ImportProgress?> = _importProgress.asStateFlow()
@@ -335,10 +339,11 @@ class FaintRecViewModel @Inject constructor(
 
     fun addLiveRecordingMarker(note: String = "") {
         if (!telemetry.value.isRecording) return
-        liveMarkerCounter++
-        val m = recordingEngine.addLiveMarker("Marker #$liveMarkerCounter", note)
+        val nextIdx = liveMarkerCounter + 1
+        val m = recordingEngine.addLiveMarker("Marker #$nextIdx", note)
         if (m != null) {
-            _snackbarEvents.tryEmit("Marker #$liveMarkerCounter added at ${com.example.util.AudioMath.formatDuration(m.timestampMs)}")
+            liveMarkerCounter = nextIdx
+            _snackbarEvents.tryEmit("Marker #$nextIdx added at ${com.example.util.AudioMath.formatDuration(m.timestampMs)}")
         }
     }
 
@@ -370,7 +375,7 @@ class FaintRecViewModel @Inject constructor(
         }
         if (telemetry.value.isRecording) {
             recordingEngine.switchInputDeviceLive(device.deviceInfo, device.name)
-            recordingEngine.addLiveMarker("Mic changed", "Switched to ${device.name}")
+            recordingEngine.addLiveMarker("Mic changed", "Switched to ${device.name}", bypassDebounce = true)
             _snackbarEvents.tryEmit("Switched live input to ${device.name}")
         }
     }
@@ -627,6 +632,11 @@ class FaintRecViewModel @Inject constructor(
     fun setLanguage(lang: String) = viewModelScope.launch { settingsDataStore.setLanguage(lang) }
     fun setChannels(ch: Int) = viewModelScope.launch { settingsDataStore.setChannels(ch) }
     fun setPreferFloat(preferFloat: Boolean) = viewModelScope.launch { settingsDataStore.setPreferFloatPcm(preferFloat) }
+
+    // --- Spirit Box Recorder Settings (synced live with SpiritBoxEngine & DataStore) ---
+    fun setSpiritBoxRecorderEnabled(enabled: Boolean) = spiritBoxEngine.setRecorderEnabled(enabled)
+    fun setSpiritBoxRecordSweepOutput(enabled: Boolean) = spiritBoxEngine.setRecordSweepOutput(enabled)
+    fun setSpiritBoxRecordMicTrack(enabled: Boolean) = spiritBoxEngine.setRecordMicTrack(enabled)
 
     override fun onCleared() {
         playbackController.stopAll()

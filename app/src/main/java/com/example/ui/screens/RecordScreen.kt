@@ -93,8 +93,14 @@ fun RecordScreen(
     val liveFft by viewModel.liveRecordFft.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val inputDevices by viewModel.inputDevices.collectAsStateWithLifecycle()
+    val externalInputDevices by viewModel.externalInputDevices.collectAsStateWithLifecycle()
     val selectedDevice by viewModel.selectedDevice.collectAsStateWithLifecycle()
     val storageInfo by viewModel.storageInfo.collectAsStateWithLifecycle()
+    val activeSourceLabel = if (telemetry.isRecording) {
+        telemetry.audioSourceLabel
+    } else {
+        viewModel.recommendedAudioSourceLabel
+    }
 
     var showLiveFft by remember { mutableStateOf(false) }
     var showDeviceSheet by remember { mutableStateOf(false) }
@@ -161,7 +167,7 @@ fun RecordScreen(
                 WarningBannerCard(
                     text = stringResource(
                         R.string.unprocessed_unsupported_warn,
-                        telemetry.audioSourceLabel
+                        activeSourceLabel
                     )
                 )
             }
@@ -253,7 +259,7 @@ fun RecordScreen(
                         val bitLabel = if (telemetry.isFloatPcm) "32-bit Float" else "16-bit PCM"
                         val chLabel = if (settings.channels == 2) "Stereo" else "Mono"
                         Text(
-                            text = "$srLabel • $bitLabel • $chLabel • ${telemetry.audioSourceLabel}",
+                            text = "$srLabel • $bitLabel • $chLabel • Source: $activeSourceLabel",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -384,10 +390,10 @@ fun RecordScreen(
                     ) {
                         Column {
                             val statusText = when {
-                                telemetry.isRecording && telemetry.isPaused -> "PAUSED"
+                                telemetry.isRecording && telemetry.isPaused -> "PAUSED • $activeSourceLabel"
                                 telemetry.isRecording && telemetry.isVarWaiting -> stringResource(R.string.var_waiting)
-                                telemetry.isRecording -> "LIVE CAPTURE"
-                                else -> "STANDBY • UNPROCESSED"
+                                telemetry.isRecording -> "LIVE CAPTURE • $activeSourceLabel"
+                                else -> "STANDBY • $activeSourceLabel"
                             }
                             Text(
                                 text = statusText,
@@ -682,6 +688,14 @@ fun RecordScreen(
                     FilledTonalButton(onClick = { viewModel.requestUsbPermission() }) {
                         Text("USB Permission")
                     }
+                }
+                if (externalInputDevices.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.no_external_mic_detected),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("no_external_mic_text")
+                    )
                 }
                 inputDevices.forEach { dev ->
                     val isSel = dev.id == selectedDevice?.id

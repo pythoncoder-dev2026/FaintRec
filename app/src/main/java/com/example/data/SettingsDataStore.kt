@@ -38,6 +38,10 @@ data class FaintRecSettings(
     val fftWindow: String = "HANN",
     val fftLogScale: Boolean = true,
     val spiritBoxStreamUrls: List<String> = DEFAULT_SPIRIT_BOX_STREAMS,
+    val spiritBoxRecorderEnabled: Boolean = true,
+    val spiritBoxRecordSweepOutput: Boolean = true,
+    val spiritBoxRecordMicTrack: Boolean = false,
+    val mp3UnavailableNoticeDismissed: Boolean = false,
     val storageType: RecordingStorageType = RecordingStorageType.APP_PRIVATE,
     val safTreeUri: String? = null,
     val safDisplayPath: String? = null
@@ -63,6 +67,10 @@ class SettingsDataStore(private val context: Context) {
         val FFT_WINDOW = stringPreferencesKey("fft_window")
         val FFT_LOG = booleanPreferencesKey("fft_log_scale")
         val SPIRIT_BOX_STREAMS = stringPreferencesKey("spirit_box_stream_urls")
+        val SPIRIT_BOX_RECORDER_ENABLED = booleanPreferencesKey("spirit_box_recorder_enabled")
+        val SPIRIT_BOX_RECORD_SWEEP = booleanPreferencesKey("spirit_box_record_sweep_output")
+        val SPIRIT_BOX_RECORD_MIC = booleanPreferencesKey("spirit_box_record_mic_track")
+        val MP3_NOTICE_DISMISSED = booleanPreferencesKey("mp3_unavailable_notice_dismissed")
         val STORAGE_TYPE = stringPreferencesKey("recording_storage_type")
         val SAF_TREE_URI = stringPreferencesKey("saf_tree_uri")
         val SAF_DISPLAY_PATH = stringPreferencesKey("saf_display_path")
@@ -91,6 +99,10 @@ class SettingsDataStore(private val context: Context) {
             fftWindow = prefs[Keys.FFT_WINDOW] ?: "HANN",
             fftLogScale = prefs[Keys.FFT_LOG] ?: true,
             spiritBoxStreamUrls = savedStreams,
+            spiritBoxRecorderEnabled = prefs[Keys.SPIRIT_BOX_RECORDER_ENABLED] ?: true,
+            spiritBoxRecordSweepOutput = prefs[Keys.SPIRIT_BOX_RECORD_SWEEP] ?: true,
+            spiritBoxRecordMicTrack = prefs[Keys.SPIRIT_BOX_RECORD_MIC] ?: false,
+            mp3UnavailableNoticeDismissed = prefs[Keys.MP3_NOTICE_DISMISSED] ?: false,
             storageType = RecordingStorageType.entries.firstOrNull {
                 it.name == prefs[Keys.STORAGE_TYPE]
             } ?: RecordingStorageType.APP_PRIVATE,
@@ -149,6 +161,30 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setSpiritBoxStreamUrls(urls: List<String>) {
         context.settingsDataStore.edit {
             it[Keys.SPIRIT_BOX_STREAMS] = json.encodeToString(urls)
+        }
+    }
+
+    suspend fun setSpiritBoxRecorderEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[Keys.SPIRIT_BOX_RECORDER_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setSpiritBoxRecordSweepOutput(enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[Keys.SPIRIT_BOX_RECORD_SWEEP] = enabled
+        }
+    }
+
+    suspend fun setSpiritBoxRecordMicTrack(enabled: Boolean) {
+        context.settingsDataStore.edit {
+            it[Keys.SPIRIT_BOX_RECORD_MIC] = enabled
+        }
+    }
+
+    suspend fun setMp3UnavailableNoticeDismissed(dismissed: Boolean) {
+        context.settingsDataStore.edit {
+            it[Keys.MP3_NOTICE_DISMISSED] = dismissed
         }
     }
 

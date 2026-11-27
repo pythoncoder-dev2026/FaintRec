@@ -87,7 +87,8 @@ class RecordingForegroundService : Service() {
                     recordingEngine.switchInputDeviceLive(fallback, fallbackName)
                     recordingEngine.addLiveMarker(
                         label = getString(R.string.mic_changed_marker),
-                        note = "$removedName disconnected -> switched to $fallbackName"
+                        note = "$removedName disconnected -> switched to $fallbackName",
+                        bypassDebounce = true
                     )
                     markerCounter++
                     notifyMicSwitched(removedName, fallbackName)
@@ -106,9 +107,12 @@ class RecordingForegroundService : Service() {
                 pushNotificationAndBus(force = true)
             }
             ACTION_ADD_MARKER -> {
-                markerCounter++
-                recordingEngine.addLiveMarker("Marker #$markerCounter", "Added from quick control")
-                pushNotificationAndBus(force = true)
+                val nextIdx = markerCounter + 1
+                val added = recordingEngine.addLiveMarker("Marker #$nextIdx", "Added from quick control")
+                if (added != null) {
+                    markerCounter = nextIdx
+                    pushNotificationAndBus(force = true)
+                }
             }
             ACTION_STOP -> {
                 stopCaptureSession()

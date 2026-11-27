@@ -20,6 +20,7 @@ import com.example.logging.AppLogger
 import com.example.storage.DirectWavTarget
 import com.example.storage.StorageLocationManager
 import com.example.util.AudioMath
+import com.example.util.MarkerDebouncer
 import com.example.util.StorageHelper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -83,11 +84,17 @@ class RecordingEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: FaintRecRepository,
     private val logger: AppLogger,
-    private val storageLocationManager: StorageLocationManager
+    private val storageLocationManager: StorageLocationManager,
+    private val deviceManager: AudioDeviceManager
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val _telemetry = MutableStateFlow(LiveRecordingTelemetry())
+    private val _telemetry = MutableStateFlow(
+        LiveRecordingTelemetry(
+            audioSourceLabel = deviceManager.getRecommendedAudioSourceLabel(),
+            unprocessedFallbackWarning = !deviceManager.supportsUnprocessedSource()
+        )
+    )
     val telemetry: StateFlow<LiveRecordingTelemetry> = _telemetry.asStateFlow()
 
     private val _liveFft = MutableStateFlow<FftResult?>(null)
@@ -105,6 +112,7 @@ class RecordingEngine @Inject constructor(
     private val isRunning = AtomicBoolean(false)
     private val isPaused = AtomicBoolean(false)
     private val framesWritten = AtomicLong(0L)
+    private val markerDebouncer = MarkerDebouncer()
 
     @Volatile var liveGainDb: Float = 6f
     @Volatile var saveRawNoGain: Boolean = true
@@ -122,7 +130,7 @@ class RecordingEngine @Inject constructor(
     private var activeSampleRate = 48000
     private var activeChannels = 1
     private var activeIsFloat = true
-    private var activeSourceLabel = "UNPROCESSED"
+    private var activeSourceLabel = deviceManager.getRecommendedAudioSourceLabel()
 
     fun configureFft(size: Int, window: FftWindowType) {
         fftProcessor.configure(size, window)
@@ -141,8 +149,9 @@ class RecordingEngine @Inject constructor(
         }
     }
 
-    fun addLiveMarker(label: String, note: String = ""): PendingMarker? {
+    fun addLiveMarker(label: String, note: String = "", bypassDebounce: Boolean = false): PendingMarker? {
         if (!isRunning.get()) return null
+        if (!bypassDebounce && !markerDebouncer.tryAcquire()) return null
         val ts = (framesWritten.get() * 1000L) / activeSampleRate.coerceAtLeast(1)
         val marker = PendingMarker(ts, label, note)
         synchronized(pendingMarkers) {
@@ -242,9 +251,9 @@ class RecordingEngine @Inject constructor(
         }
 
         if (isFallback) {
-            logger.reportNotSupported(
+            logger.reportFallback(
                 AppFeature.RECORDING_UNPROCESSED,
-                "UNPROCESSED unavailable; recording with $chosenSourceLabel @ $actualRate Hz"
+                "Fallback active ($chosenSourceLabel)"
             )
         } else {
             logger.reportSuccess(
@@ -265,6 +274,7 @@ class RecordingEngine @Inject constructor(
         activeIsFloat = chosenFloat
         activeSourceLabel = chosenSourceLabel
         framesWritten.set(0L)
+        markerDebouncer.reset()
         synchronized(pendingMarkers) { pendingMarkers.clear() }
 
         // Large ring buffer (4 seconds capacity) to prevent dropped frames
@@ -638,12 +648,16 @@ class RecordingEngine @Inject constructor(
         preferFloat: Boolean,
         preferredDevice: AudioDeviceInfo?
     ): RecordInitResult? {
-        // Priority order: UNPROCESSED -> VOICE_RECOGNITION -> MIC (no AGC, no NS, no AEC)
-        val sources = listOf(
-            MediaRecorder.AudioSource.UNPROCESSED to "UNPROCESSED",
-            MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION",
-            MediaRecorder.AudioSource.MIC to "MIC"
-        )
+        // Try UNPROCESSED only if HAL advertises PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED == "true";
+        // otherwise fall back to VOICE_RECOGNITION, then MIC.
+        val supportsUnprocessed = deviceManager.supportsUnprocessedSource()
+        val sources = buildList {
+            if (supportsUnprocessed) {
+                add(MediaRecorder.AudioSource.UNPROCESSED to "UNPROCESSED")
+            }
+            add(MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION")
+            add(MediaRecorder.AudioSource.MIC to "MIC")
+        }
         val encodings = if (preferFloat) {
             listOf(AudioFormat.ENCODING_PCM_FLOAT to true, AudioFormat.ENCODING_PCM_16BIT to false)
         } else {
@@ -674,6 +688,9 @@ class RecordingEngine @Inject constructor(
                             .setBufferSizeInBytes(bufferBytes)
                             .build()
                         if (rec.state == AudioRecord.STATE_INITIALIZED) {
+                            // Never enable NoiseSuppressor, AutomaticGainControl, or AcousticEchoCanceler;
+                            // if any was auto-attached by the HAL, disable and release it immediately.
+                            AudioDeviceManager.disableAndReleaseAutoAttachedEffects(rec.audioSessionId)
                             if (preferredDevice != null) {
                                 rec.preferredDevice = preferredDevice
                             }

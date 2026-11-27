@@ -12,6 +12,9 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -27,8 +30,7 @@ enum class InputDeviceCategory(val label: String) {
     BUILT_IN("Built-in Mic"),
     WIRED_HEADSET("Wired 3.5mm Mic"),
     USB_AUDIO("USB Audio Mic"),
-    BLUETOOTH("Bluetooth Mic"),
-    OTHER("External Input")
+    BLUETOOTH("Bluetooth Mic")
 }
 
 data class AudioInputDeviceUi(
@@ -50,6 +52,56 @@ class AudioDeviceManager @Inject constructor(
 ) {
     companion object {
         const val ACTION_USB_PERMISSION = "com.example.action.USB_AUDIO_PERMISSION"
+
+        /**
+         * Strict allowlist for external microphone input device types.
+         * Excludes TYPE_BUILTIN_MIC, TYPE_TELEPHONY, TYPE_FM_TUNER, TYPE_ECHO_REFERENCE,
+         * TYPE_REMOTE_SUBMIX, TYPE_BUS, and all other non-external system input routes.
+         */
+        fun isAllowedExternalMicType(type: Int, sdkInt: Int = Build.VERSION.SDK_INT): Boolean {
+            return when (type) {
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+                AudioDeviceInfo.TYPE_USB_ACCESSORY,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> true
+                else -> sdkInt >= Build.VERSION_CODES.S && type == AudioDeviceInfo.TYPE_BLE_HEADSET
+            }
+        }
+
+        /**
+         * Ensures NoiseSuppressor, AutomaticGainControl, and AcousticEchoCanceler are never
+         * enabled on an AudioRecord session; if the HAL auto-attached any of them, disable and
+         * release them immediately.
+         */
+        fun disableAndReleaseAutoAttachedEffects(audioSessionId: Int) {
+            if (audioSessionId <= 0) return
+            if (NoiseSuppressor.isAvailable()) {
+                runCatching {
+                    NoiseSuppressor.create(audioSessionId)?.let { ns ->
+                        if (ns.enabled) ns.enabled = false
+                        ns.release()
+                    }
+                }
+            }
+            if (AutomaticGainControl.isAvailable()) {
+                runCatching {
+                    AutomaticGainControl.create(audioSessionId)?.let { agc ->
+                        if (agc.enabled) agc.enabled = false
+                        agc.release()
+                    }
+                }
+            }
+            if (AcousticEchoCanceler.isAvailable()) {
+                runCatching {
+                    AcousticEchoCanceler.create(audioSessionId)?.let { aec ->
+                        if (aec.enabled) aec.enabled = false
+                        aec.release()
+                    }
+                }
+            }
+        }
     }
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -57,6 +109,9 @@ class AudioDeviceManager @Inject constructor(
 
     private val _inputDevices = MutableStateFlow<List<AudioInputDeviceUi>>(emptyList())
     val inputDevices: StateFlow<List<AudioInputDeviceUi>> = _inputDevices.asStateFlow()
+
+    private val _externalInputDevices = MutableStateFlow<List<AudioInputDeviceUi>>(emptyList())
+    val externalInputDevices: StateFlow<List<AudioInputDeviceUi>> = _externalInputDevices.asStateFlow()
 
     private val _selectedDevice = MutableStateFlow<AudioInputDeviceUi?>(null)
     val selectedDevice: StateFlow<AudioInputDeviceUi?> = _selectedDevice.asStateFlow()
@@ -133,8 +188,13 @@ class AudioDeviceManager @Inject constructor(
             emptyArray()
         }
 
-        val mapped = rawDevices.map { info ->
-            val category = categorize(info.type)
+        // Keep ONLY built-in mic and strictly allowlisted external mic types
+        val filtered = rawDevices.filter { info ->
+            info.type == AudioDeviceInfo.TYPE_BUILTIN_MIC || isAllowedExternalMicType(info.type)
+        }
+
+        val mapped = filtered.mapNotNull { info ->
+            val category = categorize(info.type) ?: return@mapNotNull null
             val rates = info.sampleRates.toList().ifEmpty { listOf(48000) }.sorted()
             val channels = info.channelCounts.toList().ifEmpty { listOf(1, 2) }.sorted()
             val encNames = info.encodings.map { encodingName(it) }.ifEmpty { listOf("PCM 16-bit") }
@@ -158,6 +218,7 @@ class AudioDeviceManager @Inject constructor(
         }.distinctBy { it.id }
 
         _inputDevices.value = mapped
+        _externalInputDevices.value = mapped.filter { isAllowedExternalMicType(it.rawType) }
 
         val current = _selectedDevice.value
         val match = when {
@@ -180,6 +241,10 @@ class AudioDeviceManager @Inject constructor(
     fun supportsUnprocessedSource(): Boolean {
         val prop = audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)
         return prop.equals("true", ignoreCase = true)
+    }
+
+    fun getRecommendedAudioSourceLabel(): String {
+        return if (supportsUnprocessedSource()) "UNPROCESSED" else "VOICE_RECOGNITION"
     }
 
     fun findConnectedUsbAudioDevices(): List<UsbDevice> {
@@ -211,10 +276,11 @@ class AudioDeviceManager @Inject constructor(
         return false
     }
 
-    private fun categorize(type: Int): InputDeviceCategory {
+    private fun categorize(type: Int): InputDeviceCategory? {
         return when (type) {
             AudioDeviceInfo.TYPE_BUILTIN_MIC -> InputDeviceCategory.BUILT_IN
-            AudioDeviceInfo.TYPE_WIRED_HEADSET -> InputDeviceCategory.WIRED_HEADSET
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> InputDeviceCategory.WIRED_HEADSET
             AudioDeviceInfo.TYPE_USB_DEVICE,
             AudioDeviceInfo.TYPE_USB_HEADSET,
             AudioDeviceInfo.TYPE_USB_ACCESSORY -> InputDeviceCategory.USB_AUDIO
@@ -225,7 +291,7 @@ class AudioDeviceManager @Inject constructor(
                 ) {
                     InputDeviceCategory.BLUETOOTH
                 } else {
-                    InputDeviceCategory.OTHER
+                    null
                 }
             }
         }

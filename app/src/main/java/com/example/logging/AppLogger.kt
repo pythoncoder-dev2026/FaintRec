@@ -121,13 +121,14 @@ class AppLogger @Inject constructor(
                     val updated = FeatureHealthEntity(
                         featureId = evt.featureId,
                         status = evt.status,
-                        lastSuccessMillis = if (evt.status == FeatureHealthStatus.WORKING) {
+                        lastSuccessMillis = if (evt.status == FeatureHealthStatus.WORKING || evt.status == FeatureHealthStatus.FALLBACK) {
                             evt.timestampMillis
                         } else {
                             existing?.lastSuccessMillis
                         },
                         lastErrorMessage = when (evt.status) {
                             FeatureHealthStatus.WORKING -> null
+                            FeatureHealthStatus.FALLBACK,
                             FeatureHealthStatus.FAILED,
                             FeatureHealthStatus.NOT_SUPPORTED -> evt.errorMessage?.take(180)
                             FeatureHealthStatus.NOT_TESTED -> null
@@ -200,6 +201,13 @@ class AppLogger @Inject constructor(
         enqueueLog(LogLevel.WARNING, feature.id, "Not supported: $shortReason", null)
     }
 
+    fun reportFallback(feature: AppFeature, detail: String) {
+        val now = System.currentTimeMillis()
+        val shortDetail = detail.take(180)
+        healthChannel.trySend(HealthUpdateEvent(feature.id, FeatureHealthStatus.FALLBACK, shortDetail, now))
+        enqueueLog(LogLevel.WARNING, feature.id, shortDetail, null)
+    }
+
     /**
      * Logs technical device audio capabilities once per app process launch:
      * Android version, device model, UNPROCESSED audio source support, input devices,
@@ -246,9 +254,9 @@ class AppLogger @Inject constructor(
                 enqueueLog(LogLevel.INFO, "device_info", summary, null)
 
                 if (!unprocessedSupported) {
-                    reportNotSupported(
+                    reportFallback(
                         AppFeature.RECORDING_UNPROCESSED,
-                        "Device reports PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED=false (uses fallback source)"
+                        "Fallback active (VOICE_RECOGNITION)"
                     )
                 }
             }
@@ -266,17 +274,23 @@ class AppLogger @Inject constructor(
     fun buildSummaryLine(healthList: List<FeatureHealthEntity>): String {
         val byId = healthList.associateBy { it.featureId }
         var working = 0
+        var fallback = 0
         var failed = 0
         var notSupported = 0
         AppFeature.entries.forEach { feat ->
             when (byId[feat.id]?.status ?: FeatureHealthStatus.NOT_TESTED) {
                 FeatureHealthStatus.WORKING -> working++
+                FeatureHealthStatus.FALLBACK -> fallback++
                 FeatureHealthStatus.FAILED -> failed++
                 FeatureHealthStatus.NOT_SUPPORTED -> notSupported++
                 FeatureHealthStatus.NOT_TESTED -> Unit
             }
         }
-        return "$working working, $failed failed, $notSupported not supported"
+        return if (fallback > 0) {
+            "$working working, $fallback fallback, $failed failed, $notSupported not supported"
+        } else {
+            "$working working, $failed failed, $notSupported not supported"
+        }
     }
 
     fun formatAsPlainText(

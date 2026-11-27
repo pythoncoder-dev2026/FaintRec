@@ -45,14 +45,15 @@ data class SpiritBoxConfig(
     val jitterEnabled: Boolean = true,
     val rangeStartFraction: Float = 0.0f,
     val rangeEndFraction: Float = 1.0f,
-    val staticLevel: Float = 0.35f,      // 0..1
+    val staticLevel: Float = 0.55f,      // 0..1 (default ~ -30 dBFS RMS)
     val sourceLevel: Float = 0.65f,      // 0..1
     val crossfadeMs: Int = 25,           // 0..100 ms
     val voiceHpfHz: Float = 260f,        // 80..800 Hz
     val voiceLpfHz: Float = 3800f,       // 1500..8000 Hz
     val outputVolume: Float = 0.70f,     // capped <= 0.85 for hearing safety
-    val recordSessionMix: Boolean = true,
-    val recordMicTrack: Boolean = false,
+    val recorderEnabled: Boolean = true, // Master ON/OFF switch (default ON)
+    val recordSessionMix: Boolean = true,// Sub-option: Record sweep output (default ON)
+    val recordMicTrack: Boolean = false, // Sub-option: Record microphone as 2nd track (default OFF)
     val blindTestMode: Boolean = false
 )
 
@@ -60,6 +61,8 @@ data class SpiritBoxLiveState(
     val isRunning: Boolean = false,
     val isHeld: Boolean = false,
     val isPausedByAudioFocus: Boolean = false,
+    val isRecorderEnabled: Boolean = true,
+    val isActivelyRecording: Boolean = false,
     val elapsedMs: Long = 0L,
     val hopCount: Int = 0,
     val dialFraction: Float = 0.0f,

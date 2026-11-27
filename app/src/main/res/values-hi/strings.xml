@@ -29,6 +29,7 @@
     <string name="bluetooth_mic_warn">ब्लूटूथ माइक की गुणवत्ता और सैंपल दर कम (8–16 kHz) होती है। धीमी ध्वनियों के लिए वायर्ड या USB-C माइक का उपयोग करें।</string>
     <string name="mic_changed_marker">माइक बदला गया</string>
     <string name="mic_disconnected_notice">बाहरी माइक डिस्कनेक्ट हो गया — सुरक्षित रूप से इनबिल्ट माइक पर स्विच किया गया।</string>
+    <string name="no_external_mic_detected">कोई बाहरी माइक नहीं मिला</string>
 
     <!-- Permissions -->
     <string name="perm_title">ऑडियो और बैकग्राउंड अनुमतियाँ</string>
@@ -85,6 +86,7 @@
     <string name="converter_bake_effects">इफ़ेक्ट्स एक्सपोर्ट में शामिल करें</string>
     <string name="converter_lossy_to_lossless_warn">लॉसी से लॉसलेस में बदलने पर फ़ाइल आकार बढ़ता है, लेकिन खोई हुई गुणवत्ता वापस नहीं आती।</string>
     <string name="converter_lossy_to_lossy_warn">लॉसी से लॉसी में बदलने पर ध्वनि गुणवत्ता में कमी आती है।</string>
+    <string name="converter_mp3_unavailable_note">इस बिल्ड में MP3 उपलब्ध नहीं है</string>
 
     <!-- Analysis -->
     <string name="analyze_fft">लाइव FFT</string>
@@ -118,6 +120,13 @@
     <string name="spirit_box_blind_hidden">ब्लाइंड टेस्ट सक्रिय — स्रोत छिपा है</string>
     <string name="spirit_box_record_session">मिक्स WAV रिकॉर्ड करें</string>
     <string name="spirit_box_record_mic">माइक भी रिकॉर्ड करें (दूसरा ट्रैक)</string>
+    <string name="spirit_box_recorder_title">रिकॉर्डर</string>
+    <string name="spirit_box_recorder_desc">चुने गए सेव लोकेशन में सत्र ऑडियो सहेजें</string>
+    <string name="spirit_box_recording_off_notice">रिकॉर्डिंग बंद है। कुछ भी सहेजा नहीं जा रहा है।</string>
+    <string name="spirit_box_record_sweep">स्वीप आउटपुट रिकॉर्ड करें</string>
+    <string name="spirit_box_record_mic_track">माइक्रोफ़ोन को दूसरे ट्रैक के रूप में रिकॉर्ड करें</string>
+    <string name="spirit_box_rec_on_action">Rec: ON</string>
+    <string name="spirit_box_rec_off_action">Rec: OFF</string>
     <string name="spirit_box_sessions">सत्र लॉग</string>
 
     <!-- Notifications, Tile, Widget, Shortcuts -->
@@ -148,6 +157,7 @@
     <string name="log_event_log_title">इवेंट लॉग</string>
     <string name="log_test_button">टेस्ट</string>
     <string name="log_status_working">काम कर रहा है</string>
+    <string name="log_status_fallback">फ़ॉलबैक सक्रिय</string>
     <string name="log_status_failed">विफल</string>
     <string name="log_status_not_supported">समर्थित नहीं</string>
     <string name="log_status_not_tested">परीक्षण नहीं हुआ</string>

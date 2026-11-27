@@ -29,6 +29,7 @@
     <string name="bluetooth_mic_warn">Bluetooth microphones use low-bandwidth codecs (8–16 kHz). Use a wired or USB-C microphone for faint sounds.</string>
     <string name="mic_changed_marker">Mic changed</string>
     <string name="mic_disconnected_notice">External mic disconnected — safely switched to built-in mic.</string>
+    <string name="no_external_mic_detected">No external mic detected</string>
 
     <!-- Permissions -->
     <string name="perm_title">Audio &amp; Background Permissions</string>
@@ -85,6 +86,7 @@
     <string name="converter_bake_effects">Bake Effects Into Export</string>
     <string name="converter_lossy_to_lossless_warn">Converting from a lossy source to lossless increases file size without recovering lost audio detail.</string>
     <string name="converter_lossy_to_lossy_warn">Transcoding between lossy formats causes generation quality loss.</string>
+    <string name="converter_mp3_unavailable_note">MP3 unavailable in this build</string>
 
     <!-- Analysis -->
     <string name="analyze_fft">Live FFT</string>
@@ -118,6 +120,13 @@
     <string name="spirit_box_blind_hidden">Blind Test Active — Source Hidden</string>
     <string name="spirit_box_record_session">Record Mix WAV</string>
     <string name="spirit_box_record_mic">Also Record Mic (2nd Track)</string>
+    <string name="spirit_box_recorder_title">Recorder</string>
+    <string name="spirit_box_recorder_desc">Save session audio to your chosen save location</string>
+    <string name="spirit_box_recording_off_notice">Recording is off. Nothing is saved.</string>
+    <string name="spirit_box_record_sweep">Record sweep output</string>
+    <string name="spirit_box_record_mic_track">Record microphone as a second track</string>
+    <string name="spirit_box_rec_on_action">Rec: ON</string>
+    <string name="spirit_box_rec_off_action">Rec: OFF</string>
     <string name="spirit_box_sessions">Session Logs</string>
 
     <!-- Notifications, Tile, Widget, Shortcuts -->
@@ -148,6 +157,7 @@
     <string name="log_event_log_title">Event Log</string>
     <string name="log_test_button">Test</string>
     <string name="log_status_working">Working</string>
+    <string name="log_status_fallback">Fallback active</string>
     <string name="log_status_failed">Failed</string>
     <string name="log_status_not_supported">Not supported</string>
     <string name="log_status_not_tested">Not tested</string>
